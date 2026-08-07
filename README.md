@@ -1,37 +1,26 @@
 # RISC-V 32-bit 5-Stage Pipeline + Custom Compression Accelerator
 
-Đề tài Q2: **Pattern-Aware Domain-Specific Compression Accelerator with Custom RISC-V Instruction**
+Đề tài Q2: Pattern-Aware Domain-Specific Compression Accelerator with Custom RISC-V Instruction.
+
+Dự án này xây dựng một lõi RISC-V RV32I pipeline 5 tầng, rồi gắn thêm vào đó một bộ tăng tốc nén dữ liệu điều khiển bằng ba lệnh custom. Điểm khác biệt so với các accelerator nén thông thường là người lập trình không phải chọn thuật toán nén: một khối phần cứng nhỏ tên `pattern_detect` sẽ đo đặc tính của từng block dữ liệu rồi tự quyết định dùng thuật toán nào.
 
 ---
 
 ## Mục lục
 
 1. [Tổng quan kiến trúc](#1-tổng-quan-kiến-trúc)
-2. [RISC-V ISA — Nền tảng](#2-risc-v-isa--nền-tảng)
+2. [RISC-V ISA — nền tảng](#2-risc-v-isa--nền-tảng)
 3. [Pipeline 5 giai đoạn](#3-pipeline-5-giai-đoạn)
-4. [Hazard Handling](#4-hazard-handling)
+4. [Xử lý hazard](#4-xử-lý-hazard)
 5. [Forwarding](#5-forwarding)
-6. [Những gì được THÊM VÀO so với RISC-V gốc](#6-những-gì-được-thêm-vào-so-với-risc-v-gốc)
-   - 6.1 [Custom Opcode Decoder](#61-thêm-1--custom-opcode-decoder-trong-id_stagev)
-   - 6.2 [Pipeline Register mở rộng](#62-thêm-2--pipeline-register-mở-rộng)
-   - 6.3 [Mux kết quả tại EX](#63-thêm-3--mux-kết-quả-tại-ex-stage)
-   - 6.4 [Scratchpad](#64-thêm-4--scratchpad-bộ-nhớ-dùng-chung-hwsw)
-   - 6.5 [compress_accel — Bộ điều phối](#65-thêm-5--compress_accelv-bộ-điều-phối-chính)
-   - 6.6 [comp_zero — Zero-Suppression](#66-thêm-6--comp_zerov-nén-zero-suppression)
-   - 6.7 [comp_rle — Run-Length Encoding](#67-thêm-7--comp_rlev-nén-run-length-encoding)
-   - 6.8 [comp_delta — Delta Encoding](#68-thêm-8--comp_deltav-nén-delta-encoding)
-   - 6.9 [pattern_detect — Phát hiện mẫu (NOVELTY)](#69-thêm-9--pattern_detectv-phát-hiện-mẫu-novelty)
-   - 6.10 [Wiring trong cpu_top](#610-thêm-10--wiring-trong-cpu_topv)
-   - 6.11 [Software Layer](#611-thêm-11--software-layer-hwsw-co-design)
-7. [Custom Instruction Encoding](#7-custom-instruction-encoding)
-8. [HW/SW Co-Design Flow](#8-hwsw-co-design-flow)
-9. [Kết quả Verification](#9-kết-quả-verification)
-10. [Đánh giá — Evaluation (GĐ6)](#10-đánh-giá--evaluation-gđ6)
+6. [Những gì được thêm vào so với RISC-V gốc](#6-những-gì-được-thêm-vào-so-với-risc-v-gốc)
+7. [Mã hóa lệnh custom](#7-mã-hóa-lệnh-custom)
+8. [Luồng HW/SW co-design](#8-luồng-hwsw-co-design)
+9. [Kết quả verification](#9-kết-quả-verification)
+10. [Đánh giá](#10-đánh-giá)
 11. [Cấu trúc file](#11-cấu-trúc-file)
-12. [Chạy Simulation (ModelSim)](#12-chạy-simulation-modelsim)
-13. [Dữ liệu lớn — cách tái tạo](#13-dữ-liệu-lớn--cách-tái-tạo)
-14. [Các file KHÔNG nằm trong repo](#14-các-file-không-nằm-trong-repo)
-15. [Đưa dự án lên GitHub](#15-đưa-dự-án-lên-github)
+12. [Chạy simulation](#12-chạy-simulation)
+13. [Dữ liệu lớn và cách tái tạo](#13-dữ-liệu-lớn-và-cách-tái-tạo)
 
 ---
 
@@ -56,17 +45,21 @@
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Điểm novelty:** Thay vì người lập trình chọn mode nén, module `pattern_detect` **tự đo** đặc tính dữ liệu và chọn mode tốt nhất mỗi block → ADAPTIVE = **2.835×** vs fixed tốt nhất (DELTA-only) = 1.622×.
+Accelerator gắn vào tầng EX, còn dữ liệu nó đọc và ghi nằm trong một scratchpad dual-port tách khỏi data memory thông thường. Cách bố trí này giữ cho pipeline gốc gần như không đổi: tầng EX chỉ cần thêm một mux chọn giữa kết quả ALU và kết quả accelerator.
+
+Về mặt hiệu quả nén, cơ chế chọn mode tự động cho tỉ số 2.835× trên dataset hỗn hợp, trong khi mode cố định tốt nhất (DELTA) chỉ đạt 1.622×. Chênh lệch này là lý do tồn tại của cả dự án, và mục 10 trình bày chi tiết cách đo.
 
 ---
 
-## 2. RISC-V ISA — Nền tảng
+## 2. RISC-V ISA — nền tảng
 
 ### Thanh ghi
 
-32 thanh ghi **x0–x31**, mỗi cái 32-bit. `x0` luôn = 0, không ghi được (hardware enforce tại `id_stage.v:63`).
+Kiến trúc có 32 thanh ghi x0 đến x31, mỗi thanh ghi 32-bit. Thanh ghi x0 luôn đọc ra 0 và không ghi được; điều này được ép ngay trong phần cứng tại `id_stage.v:63` chứ không dựa vào compiler.
 
-### 6 định dạng lệnh (tất cả 32-bit fixed-width)
+### Sáu định dạng lệnh
+
+Mọi lệnh đều dài đúng 32 bit, chia thành sáu format:
 
 | Format | Cấu trúc bits | Dùng cho |
 |--------|--------------|----------|
@@ -77,9 +70,9 @@
 | U-type | `[imm20\|rd\|opcode]` | LUI, AUIPC |
 | J-type | `[imm[20,10:1,11,19:12]\|rd\|opcode]` | JAL |
 
-**Lưu ý immediate encoding:** B và J type có các bit immediate bị xáo trộn để giữ `rd`, `rs1` cùng vị trí giữa các format — tiết kiệm mux trong silicon. Xem `id_stage.v:72–97` để xem cách assembly lại.
+Ở B-type và J-type, các bit immediate trông như bị xáo trộn lộn xộn. Thực ra đây là lựa chọn có chủ đích của RISC-V: nhờ xáo trộn như vậy mà trường `rd` và `rs1` nằm cùng một vị trí bit ở mọi format, nên phần decode không cần mux để chọn xem lấy chỉ số thanh ghi từ đâu. Cách ráp lại immediate xem tại `id_stage.v:72–97`.
 
-### Tập lệnh hỗ trợ
+### Tập lệnh được hỗ trợ
 
 ```
 ALU R-type : ADD SUB AND OR XOR SLL SRL SRA SLT SLTU
@@ -95,7 +88,7 @@ Custom     : PDETECT CCOMPR CSTAT  (opcode 0x0B)
 
 ## 3. Pipeline 5 giai đoạn
 
-Một lệnh đi qua 5 giai đoạn tuần tự, mỗi giai đoạn 1 clock. 5 lệnh khác nhau chạy song song:
+Mỗi lệnh đi qua năm giai đoạn, mỗi giai đoạn tốn một chu kỳ clock. Vì các giai đoạn độc lập nhau nên năm lệnh khác nhau có thể cùng chạy một lúc, mỗi lệnh ở một tầng:
 
 ```
 Cycle:   1    2    3    4    5    6    7
@@ -106,22 +99,24 @@ Lệnh 3:           [IF] [ID] [EX] [M]  [WB]
 
 ### IF — `if_stage.v`
 
-- **PC register** 32-bit: mỗi clock tăng +4 (word-aligned).
-- Đọc `instruction_memory` bằng `pc[9:2]` (8-bit word addr → 256 lệnh tối đa).
-- `next_pc` đến từ `branch_target_ex` (khi branch/jump) hoặc `pc+4`.
-- `stall_if=1` → PC không thay đổi (freeze, fetch lại lệnh cũ).
+Tầng này chỉ có một việc: lấy lệnh kế tiếp. Thanh ghi PC 32-bit tăng 4 mỗi clock vì lệnh dài 4 byte. Bộ nhớ lệnh được đánh địa chỉ bằng `pc[9:2]`, tức 8 bit word-address, nên chương trình tối đa 256 lệnh.
+
+Giá trị `next_pc` bình thường là `pc+4`, nhưng khi có branch hoặc jump thì lấy `branch_target_ex` từ tầng EX. Nếu `stall_if` bật lên 1 thì PC đứng yên, lệnh cũ được fetch lại — đây là cách pipeline "đóng băng" tầng IF khi cần chờ.
 
 ### ID — `id_stage.v`
 
-Làm 2 việc song song:
+Tầng ID làm hai việc song song trong cùng một chu kỳ.
 
-**a) Register File read** (32×32-bit, đọc async/combinational):
+Việc thứ nhất là đọc register file. Register file 32×32-bit đọc kiểu tổ hợp, không cần clock:
+
 ```
 rs1_data = (rs1==0) ? 0 : (WB đang ghi rd==rs1) ? write_data : regfile[rs1]
 ```
-WB bypass ngay tại ID tránh 1 cycle stall.
 
-**b) Control signal decode** (combinational từ opcode):
+Nhánh giữa là điểm đáng chú ý: nếu tầng WB đang ghi đúng thanh ghi mà ID đang đọc, ta lấy thẳng giá trị sắp ghi thay vì đọc ô nhớ cũ. Không có bypass này thì mỗi lần lệnh cách nhau 3 nhịp cùng dùng một thanh ghi sẽ phải stall một cycle.
+
+Việc thứ hai là giải mã opcode thành các tín hiệu điều khiển:
+
 ```
 reg_write   — cho phép WB ghi register
 alu_src     — ALU in2 từ imm (1) hay rs2 (0)
@@ -131,29 +126,33 @@ mem_write   — ghi data memory
 mem_to_reg  — WB chọn read_data thay vì ALU result
 branch      — lệnh branch
 jump        — JAL/JALR
-custom_en   — kích accelerator (THÊM MỚI)
-custom_op   — PDETECT/CCOMPR/CSTAT (THÊM MỚI)
+custom_en   — kích accelerator (thêm mới)
+custom_op   — PDETECT/CCOMPR/CSTAT (thêm mới)
 ```
+
+Hai dòng cuối là phần mở rộng của dự án; phần còn lại là RV32I chuẩn.
 
 ### EX — `ex_stage.v`
 
-- **ALU**: ADD/SUB/AND/OR/XOR/SLL/SRL/SRA/SLT/SLTU/LUI (4-bit `alu_ctrl`).
-- **AUIPC**: `alu_opA_sel=1` → ALU input A = PC (không phải rs1).
-- **Branch resolution**: so sánh `rs1` vs `rs2` → `branch_taken`.
-- **Branch target**: `pc_ex + imm_ex`. JALR: `(rs1 + imm) & ~1` (clear bit 0).
-- **Custom mux** (THÊM MỚI):
-  ```verilog
-  assign ex_writeback_result = custom_en_ex ? custom_result_ex : alu_result_ex;
-  ```
+ALU hỗ trợ ADD, SUB, AND, OR, XOR, SLL, SRL, SRA, SLT, SLTU và LUI, chọn bằng `alu_ctrl` 4-bit. Riêng AUIPC cần cộng với PC thay vì rs1, nên có thêm tín hiệu `alu_opA_sel` để đổi nguồn của input A.
+
+Branch được quyết định tại đây bằng cách so sánh rs1 với rs2, cho ra `branch_taken`. Địa chỉ đích là `pc_ex + imm_ex`, riêng JALR tính `(rs1 + imm) & ~1` vì spec bắt buộc xóa bit 0.
+
+Phần thêm mới của dự án nằm ở một dòng mux:
+
+```verilog
+assign ex_writeback_result = custom_en_ex ? custom_result_ex : alu_result_ex;
+```
 
 ### MEM — `mem_stage.v`
 
-- `data_mem[0:255]` — 256 word bộ nhớ dữ liệu thông thường.
-- **Address decode** (THÊM MỚI): `address[12]=1` → scratchpad, `=0` → data_mem.
-- Sub-word store: SB/SH dùng `byte_en` mask và `aligned_wdata` (replicate byte/halfword).
-- Load sign-extension: LB sign-extend 8→32 bit; LBU zero-extend.
+Bộ nhớ dữ liệu `data_mem[0:255]` chứa 256 word. Dự án thêm vào đây một bước decode địa chỉ: nếu `address[12]` bằng 1 thì truy cập rơi vào scratchpad của accelerator, bằng 0 thì vào data memory như bình thường.
 
-### WB — `wb_stage` trong `wb_hazard_fwd.v`
+Store sub-word (SB, SH) dùng mask `byte_en` cộng với `aligned_wdata` — dữ liệu được nhân bản ra cả 4 byte lane rồi mask mới chọn lane nào thực sự ghi. Chiều ngược lại, load sub-word cần mở rộng dấu: LB mở rộng dấu từ 8 lên 32 bit, còn LBU thì độn 0.
+
+### WB — trong `wb_hazard_fwd.v`
+
+Tầng cuối chọn một trong ba nguồn để ghi ngược về register file:
 
 ```
 jump=1       → pc+4  (JAL/JALR lưu return address)
@@ -161,45 +160,44 @@ mem_to_reg=1 → read_data  (kết quả LW)
 else         → alu_result
 ```
 
-### Pipeline Registers
+### Pipeline register
+
+Giữa mỗi cặp tầng có một thanh ghi chốt dữ liệu lại:
 
 | Register | Nội dung chính |
 |----------|---------------|
 | IF/ID | pc, pc+4, instruction |
-| ID/EX | rs1_data, rs2_data, imm, tất cả control signals + **custom_en/op** |
+| ID/EX | rs1_data, rs2_data, imm, toàn bộ control signal, thêm custom_en/custom_op |
 | EX/MEM | alu_result, rs2_data, pc+4, reg_write, funct3 |
 | MEM/WB | alu_result, read_data, pc+4, reg_write |
 
-Tất cả có `rst_n` (async reset) và `clk_en` (freeze toàn pipeline).
+Tất cả đều có `rst_n` reset bất đồng bộ và `clk_en` để đóng băng toàn bộ pipeline khi cần.
 
 ---
 
-## 4. Hazard Handling
+## 4. Xử lý hazard
 
-### Data hazard — Load-Use
+### Load-use hazard
 
-LW ở EX, lệnh ngay sau cần kết quả → phải chờ 1 cycle:
+Đây là trường hợp duy nhất mà forwarding không cứu được. Khi lệnh LW đang ở tầng EX, dữ liệu nó cần chưa được đọc ra khỏi bộ nhớ (phải sang tầng MEM mới có), nên lệnh ngay sau bắt buộc phải chờ một nhịp:
+
 ```verilog
 // wb_hazard_fwd.v:19
 load_use_hazard = mem_read_ex && (rd_addr_ex != 0) &&
                   (rd_addr_ex == rs1_addr_id || rd_addr_ex == rs2_addr_id)
 ```
-Khi detect: `stall_if=1`, `stall_id=1`, `flush_id=1` (chèn bubble NOP vào EX).
 
-### Control hazard — Branch/Jump
+Khi phát hiện, phần cứng bật `stall_if` và `stall_id` để giữ hai tầng đầu đứng yên, đồng thời `flush_id` chèn một NOP vào EX để lấp chỗ trống.
 
-Branch taken biết ở EX — 2 lệnh sau đã vào IF/ID sai:
-```
-flush_if=1  → xóa lệnh đang trong IF
-flush_id=1  → xóa lệnh đang trong ID
-```
-Penalty = 2 cycles mỗi lần branch taken.
+### Control hazard
+
+Branch chỉ biết có nhảy hay không khi đã tới tầng EX. Lúc đó hai lệnh phía sau đã lỡ vào IF và ID rồi, và nếu branch thực sự nhảy thì cả hai đều sai. Cách xử lý là xóa chúng đi bằng `flush_if` và `flush_id`, tốn 2 cycle mỗi lần branch được lấy.
 
 ---
 
 ## 5. Forwarding
 
-Hầu hết data hazard (không phải load-use) giải quyết bằng forward kết quả từ stage sau về EX — không cần stall:
+Phần lớn data hazard không cần stall — chỉ cần lấy kết quả từ tầng sau chuyển ngược về EX trước khi nó kịp ghi vào register file:
 
 ```
 fwd_a = 2'b10 → ALU result từ EX/MEM reg  (1 cycle cũ)
@@ -207,18 +205,22 @@ fwd_a = 2'b01 → write_data từ MEM/WB reg  (2 cycle cũ)
 fwd_a = 2'b00 → từ ID/EX reg              (bình thường)
 ```
 
-Priority: MEM > WB > bình thường (kiểm tra `rd_addr_mem` trước).
+Thứ tự ưu tiên là MEM trước, rồi mới tới WB. Lý do là nếu cùng một thanh ghi bị ghi bởi hai lệnh khác nhau thì lệnh gần hơn (đang ở MEM) mới là giá trị mới nhất, nên phải kiểm `rd_addr_mem` trước.
 
 ```asm
 add x1, x2, x3   # EX: tính x1
-add x4, x1, x5   # EX cần x1 → forward từ EX/MEM, không stall!
+add x4, x1, x5   # EX cần x1, forward thẳng từ EX/MEM nên không phải stall
 ```
 
 ---
 
-## 6. Những gì được THÊM VÀO so với RISC-V gốc
+## 6. Những gì được thêm vào so với RISC-V gốc
 
-### 6.1 Thêm 1 — Custom Opcode Decoder trong `id_stage.v`
+Phần này liệt kê từng thay đổi so với một lõi RV32I thuần, theo thứ tự dữ liệu chảy qua pipeline.
+
+### 6.1 Decoder cho opcode custom
+
+RISC-V dành sẵn opcode 0x0B (custom-0) cho phần mở rộng của người dùng, nên không cần đụng tới bất kỳ opcode chuẩn nào. Ba lệnh mới phân biệt nhau bằng trường funct3:
 
 ```verilog
 localparam OPC_CUSTOM0 = 7'b0001011;  // = 0x0B (custom-0 theo RISC-V spec)
@@ -237,30 +239,33 @@ OPC_CUSTOM0: begin
 end
 ```
 
-CCOMPR không ghi regfile vì chỉ kick accelerator — kết quả lấy sau qua CSTAT poll.
+CCOMPR không bật `reg_write` vì nó chỉ khởi động accelerator chứ không có gì trả về ngay. Kết quả nén được lấy sau bằng cách poll CSTAT.
 
-### 6.2 Thêm 2 — Pipeline Register mở rộng
+### 6.2 Mở rộng pipeline register
 
-`id_ex_reg` trong `pipeline_regs.v` thêm 2 field mới:
+`id_ex_reg` trong `pipeline_regs.v` nhận thêm hai trường:
+
 ```verilog
 input  wire        custom_en_in,
 input  wire [2:0]  custom_op_in,
 output reg         custom_en_out,
 output reg  [2:0]  custom_op_out,
 ```
-Chỉ qua ID/EX (không cần qua EX/MEM) vì accelerator kết nối tại stage EX.
 
-### 6.3 Thêm 3 — Mux kết quả tại EX stage
+Hai tín hiệu này chỉ cần đi qua ID/EX, không cần lan tới EX/MEM, vì accelerator nối vào tầng EX và tiêu thụ chúng ngay tại đó.
+
+### 6.3 Mux kết quả tại tầng EX
 
 ```verilog
 // cpu_top.v:269
 assign ex_writeback_result = custom_en_ex ? custom_result_ex : alu_result_ex;
 ```
-Khi `custom_en_ex=1`, kết quả accelerator thay thế ALU result vào pipeline. `custom_result_ex` trả về **ngay trong cùng cycle** (combinational) — CSTAT trả status_word, PDETECT trả det_word.
 
-### 6.4 Thêm 4 — Scratchpad: Bộ nhớ dùng chung HW/SW
+`custom_result_ex` là tín hiệu tổ hợp nên có giá trị ngay trong cùng chu kỳ. Nhờ vậy CSTAT và PDETECT trả kết quả về thanh ghi đích mà không tốn thêm nhịp nào so với một lệnh ALU thường.
 
-File `scratchpad.v` — **hoàn toàn mới**. Lý do: accelerator không thể dùng `data_mem` của MEM stage mà không làm phức tạp arbitration.
+### 6.4 Scratchpad — bộ nhớ dùng chung giữa CPU và accelerator
+
+File `scratchpad.v` là module hoàn toàn mới. Về nguyên tắc accelerator có thể dùng chung `data_mem` của tầng MEM, nhưng khi đó phải có arbiter phân xử giữa CPU và accelerator, và phải xử lý trường hợp cả hai cùng muốn ghi. Tách riêng một khối nhớ dual-port đơn giản hơn nhiều:
 
 ```verilog
 module scratchpad #(AW=8, DW=32)(
@@ -273,14 +278,18 @@ module scratchpad #(AW=8, DW=32)(
 );
 ```
 
-**Address decode** trong `mem_stage.v`:
+CPU dùng port 0 để nạp dữ liệu nguồn vào, accelerator dùng port 1 để ghi kết quả ra. Cổng đọc là bất đồng bộ, tức accelerator đặt địa chỉ ra và có dữ liệu ngay trong cùng cycle — chi tiết này ảnh hưởng trực tiếp tới latency của cả ba module nén.
+
+Việc phân biệt hai vùng nhớ nằm ở `mem_stage.v`:
+
 ```
 address[12] = 0  →  data_mem  (0x0000–0x03FC)
 address[12] = 1  →  scratchpad (0x1000–0x13FC)
 word_addr = address[9:2]  (byte addr ÷ 4)
 ```
 
-**Vùng địa chỉ dự án:**
+Cách bố trí vùng nhớ trong demo:
+
 ```
 scratchpad[0..47]    = 3 block nguồn (3×16 word = demo_src.hex)
 scratchpad[48..63]   = kết quả nén block 0 (ZERO, 5 word)
@@ -288,14 +297,14 @@ scratchpad[64..68]   = kết quả nén block 1 (RLE, 5 word)
 scratchpad[69..74]   = kết quả nén block 2 (DELTA, 6 word)
 ```
 
-### 6.5 Thêm 5 — `compress_accel.v`: Bộ điều phối chính
+### 6.5 `Compress_accel.v` — bộ điều phối
 
-File `Compress_accel.v` — **hoàn toàn mới**. Chứa 4 sub-module và điều phối chúng.
+Module này chứa bốn sub-module (ba compressor và một detector) và quyết định cái nào chạy khi nào.
 
-**Tín hiệu vào:** `custom_en`, `custom_op`, `op_a=fwd_rs1_ex`, `op_b=fwd_rs2_ex`
-> `op_a/op_b` lấy từ **forwarded** value — luôn nhận giá trị đúng nhất, kể cả khi forward từ MEM/WB.
+Đầu vào gồm `custom_en`, `custom_op`, cùng hai toán hạng `op_a = fwd_rs1_ex` và `op_b = fwd_rs2_ex`. Điểm cần lưu ý là hai toán hạng lấy từ giá trị đã forward chứ không lấy thẳng từ ID/EX. Nếu lấy thẳng, một lệnh custom đứng ngay sau lệnh tính địa chỉ sẽ nhận phải giá trị cũ.
 
-**Tách tham số từ op_b:**
+Tham số được nhét chung vào `op_b` để tiết kiệm số toán hạng:
+
 ```
 CCOMPR:  src_word  = op_a[AW+1:2]    (byte→word: ÷4)
          dest_word = op_b[AW+1:2]
@@ -305,22 +314,21 @@ PDETECT: tau1 = op_b[5:0]   (0 → dùng TAU1_DEF=8)
          wmax = op_b[21:16]
 ```
 
-**Signal START cho sub-module:**
+Mẹo ở đây là địa chỉ đích luôn word-aligned nên hai bit thấp luôn bằng 0, có thể mượn để chở mã mode mà không mất thông tin.
+
+Tín hiệu start được sinh sao cho tại mỗi thời điểm chỉ đúng một sub-module được kích hoạt:
+
 ```verilog
 wire start_z = (state==S_IDLE) & ccompr_cmd & (req_mode==2'b00) & clk_en;
 wire start_r = (state==S_IDLE) & ccompr_cmd & (req_mode==2'b01) & clk_en;
 wire start_d = (state==S_IDLE) & ccompr_cmd & (req_mode==2'b10) & clk_en;
 wire start_p = (state==S_IDLE) & pdetect_cmd & clk_en;
 ```
-Chỉ đúng 1 sub-module nhận `start=1` tại mỗi thời điểm.
 
-**FSM 2 state:**
-```
-S_IDLE: chờ CCOMPR/PDETECT → S_RUN
-S_RUN:  chờ sub-module done → latch last_result, last_op → done_r=1 → S_IDLE
-```
+FSM của bộ điều phối chỉ có hai trạng thái. `S_IDLE` chờ lệnh CCOMPR hoặc PDETECT tới rồi chuyển sang `S_RUN`. `S_RUN` chờ sub-module báo done, chốt lại `last_result` và `last_op`, bật `done_r` rồi quay về idle.
 
-**CSTAT word:**
+Trạng thái được phần mềm đọc qua CSTAT:
+
 ```
 bit[31] = busy
 bit[30] = done    ← SW poll cái này
@@ -329,34 +337,31 @@ bit[28] = last_op  (0=compress → last_result=out_len; 1=detect → last_result
 bit[27:0] = last_result
 ```
 
-### 6.6 Thêm 6 — `comp_zero.v`: Nén Zero-Suppression
+### 6.6 `comp_zero.v` — nén zero-suppression
 
-**Ý tưởng:** Block có nhiều word=0 → lưu bitmap 16-bit + chỉ các word khác 0.
+Thuật toán này khai thác trường hợp block có nhiều word bằng 0. Thay vì lưu cả 16 word, ta lưu một bitmap 16-bit đánh dấu word nào khác 0, rồi chỉ lưu các word khác 0 đó.
 
-**Format output:**
 ```
 Word 0 (header): {14'b0, 00, bitmap[15:0]}   mode=00 ở bit[17:16]
 Word 1..K:        các word non-zero theo thứ tự
 out_len = 1 + K   (K = số word ≠ 0)
 ```
 
-**FSM 3 state** (`S_IDLE → S_STREAM → S_HEADER`):
-- `S_STREAM`: đọc từng word async (mỗi cycle 1 word). Nếu word≠0: ghi dest, set `bitmap[idx]`, `wptr++`.
-- `S_HEADER`: ghi header vào `dest[0]`, báo done.
+FSM có ba trạng thái. `S_STREAM` đọc từng word một, gặp word khác 0 thì ghi ra đích, set bit tương ứng trong bitmap và tăng con trỏ ghi. `S_HEADER` ghi header vào `dest[0]` rồi báo xong.
 
-**Trick async read:** `rd_addr = src_base_r + idx` là wire tổ hợp → `rd_data` sẵn sàng ngay trong cùng cycle → N+2 cycles tổng.
+Sở dĩ cả quá trình chỉ tốn N+2 cycle là nhờ cổng đọc bất đồng bộ của scratchpad: `rd_addr = src_base_r + idx` là wire tổ hợp nên `rd_data` có sẵn ngay trong cùng cycle, không phải chờ một nhịp cho bộ nhớ trả về.
 
-**Ví dụ:** `[0,0,A,0,B,0,...,C,0]` (A,B,C non-zero ở vị trí 2,4,14)
+Ví dụ với block `[0,0,A,0,B,0,...,C,0]` trong đó A, B, C nằm ở vị trí 2, 4, 14:
+
 ```
 bitmap  = 0b0100000000010100  (bit 2,4,14)
 output  = [header, A, B, C]  → out_len=4  (thay vì 16 word, tiết kiệm 75%)
 ```
 
-### 6.7 Thêm 7 — `comp_rle.v`: Nén Run-Length Encoding
+### 6.7 `comp_rle.v` — run-length encoding
 
-**Ý tưởng:** Block có đoạn lặp → lưu (value, count) thay vì từng phần tử.
+Khi dữ liệu có nhiều đoạn giá trị lặp lại liên tiếp, lưu cặp (giá trị, số lần) rẻ hơn lưu từng phần tử.
 
-**Format output:**
 ```
 Word 0 (header): {14'b0, 01, num_runs[15:0]}
 Word 1,2:        (run_val_0, run_cnt_0)
@@ -364,23 +369,23 @@ Word 3,4:        (run_val_1, run_cnt_1)   ...
 out_len = 1 + 2×num_runs
 ```
 
-**FSM 6 state** (`S_IDLE → S_LOAD → S_SCAN → S_WVAL → S_WCNT → S_HEADER`):
-- `S_LOAD`: nạp toàn bộ N word vào `wbuf[]` (cần buffer trước khi scan).
-- `S_SCAN`: duyệt từ `scan_idx=1`, nếu `wbuf[scan_idx]==run_val` → `run_cnt++`, ngược lại → xả run.
-- `S_WVAL/S_WCNT`: mỗi state ghi 1 word vào scratchpad (1 write port → 2 cycles mỗi run).
-- `S_HEADER`: ghi header, done.
+FSM sáu trạng thái, đi theo thứ tự `S_IDLE → S_LOAD → S_SCAN → S_WVAL → S_WCNT → S_HEADER`. Khác với zero-suppression, RLE phải nạp toàn bộ N word vào `wbuf[]` trước rồi mới quét được, vì cần biết một run kết thúc ở đâu trước khi ghi được số đếm của nó.
 
-**Ví dụ:** `[5,5,5,5,5,5,5,5,5, 7,7,7,7,7,7,7]`
+`S_SCAN` duyệt từ `scan_idx=1`, gặp phần tử trùng với `run_val` thì tăng bộ đếm, gặp phần tử khác thì xả run hiện tại ra. Việc ghi tách làm hai trạng thái `S_WVAL` và `S_WCNT` vì scratchpad chỉ có một cổng ghi, mỗi run tốn 2 cycle.
+
+Ví dụ với `[5,5,5,5,5,5,5,5,5, 7,7,7,7,7,7,7]`:
+
 ```
 runs    = [(5,9), (7,7)]
 output  = [header|2, 5, 9, 7, 7]  → out_len=5  (tiết kiệm 69%)
 ```
 
-### 6.8 Thêm 8 — `comp_delta.v`: Nén Delta Encoding
+### 6.8 `comp_delta.v` — delta encoding
 
-**Ý tưởng:** Dữ liệu biến thiên chậm → lưu base + các hiệu 8-bit signed (4 hiệu/word).
+Dữ liệu cảm biến thường biến thiên chậm, hai mẫu liên tiếp chênh nhau rất ít. Delta encoding lưu giá trị đầu tiên làm gốc rồi lưu các hiệu, và nếu mọi hiệu đều nằm gọn trong 8 bit có dấu thì nhét được 4 hiệu vào một word.
 
-**Format output (packed — khi tất cả hiệu fit [-128,127]):**
+Trường hợp đóng gói được:
+
 ```
 Word 0 (header): {14'b0, 10, 7'b0, packed=1, 8'b0}
 Word 1:           base = block[0]
@@ -391,28 +396,32 @@ Word 5:           {0, diff[15], diff[14], diff[13]}
 out_len = 6
 ```
 
-**Format output (raw fallback — có hiệu không fit):**
+Nếu có dù chỉ một hiệu vượt khỏi khoảng [-128, 127], module rơi về chế độ raw, lưu nguyên 16 word gốc và chấp nhận out_len = 17. Đây là cái giá phải trả để đảm bảo không mất mát dữ liệu:
+
 ```
 Word 0 (header): {14'b0, 10, 16'b0}   packed=0
 Word 1..16:       16 word gốc
 out_len = 17
 ```
 
-**Kiểm tra `fits` — tổ hợp trên buffer:**
+Phép kiểm tra một hiệu có vừa 8-bit signed hay không được viết gọn như sau:
+
 ```verilog
 // 8-bit signed fit: 25 bit cao [31:7] phải đồng nhất
 if (!((&diff[k][31:7]) | (~|diff[k][31:7])))  fits = 1'b0;
 ```
-`&diff[k][31:7]`=1 nếu all-1 (số âm nhỏ); `~|diff[k][31:7]`=1 nếu all-0 (số dương nhỏ).
 
-**FSM 4 state** (`S_IDLE → S_LOAD → S_EMIT → S_FIN`):
-- `S_EMIT`: counter `e` chạy 0→5 (packed) hoặc 0→16 (raw); mỗi cycle ghi 1 word; `wr_data` là wire tổ hợp từ `e`.
+Ý tưởng là một số 8-bit có dấu khi mở rộng lên 32 bit thì 25 bit cao phải giống hệt nhau. `&diff[k][31:7]` bằng 1 khi tất cả đều là 1 (số âm nhỏ), `~|diff[k][31:7]` bằng 1 khi tất cả đều là 0 (số dương nhỏ). Không rơi vào hai trường hợp đó nghĩa là hiệu quá lớn.
 
-### 6.9 Thêm 9 — `pattern_detect.v`: Phát hiện mẫu (NOVELTY)
+FSM bốn trạng thái `S_IDLE → S_LOAD → S_EMIT → S_FIN`. Trong `S_EMIT`, biến đếm `e` chạy từ 0 tới 5 nếu đóng gói được hoặc từ 0 tới 16 nếu phải dùng raw, mỗi cycle ghi một word; `wr_data` là wire tổ hợp chọn theo `e`.
 
-Đây là **đóng góp khoa học chính** — phần cứng tự đo đặc tính và chọn mode nén.
+### 6.9 `pattern_detect.v` — khối phát hiện mẫu
 
-#### Hàm `sbits` — Bề rộng bit signed tối thiểu (= LZC trên số signed)
+Đây là đóng góp chính của dự án: thay vì để phần mềm đoán nên nén kiểu gì, phần cứng tự đo rồi tự chọn.
+
+#### Hàm `sbits`
+
+Hàm này trả về số bit tối thiểu cần để biểu diễn một số có dấu, tương đương phép đếm số 0 dẫn đầu nhưng làm trên số signed:
 
 ```verilog
 function [5:0] sbits;
@@ -427,9 +436,11 @@ function [5:0] sbits;
 endfunction
 ```
 
-`sbits(5)=4` (cần 4-bit signed để biểu diễn +5); `sbits(-1)=1`; `sbits(127)=8`; `sbits(128)=9`.
+Kiểm chứng nhanh: `sbits(5)` bằng 4 vì cần 4 bit có dấu để biểu diễn +5; `sbits(-1)` bằng 1; `sbits(127)` bằng 8; `sbits(128)` bằng 9.
 
-#### Ba chỉ số đo song song (combinational từ `wbuf[]`)
+#### Ba chỉ số đo
+
+Detector đo ba con số cho mỗi block: số word bằng 0, số cặp kề nhau trùng giá trị, và bề rộng bit lớn nhất trong các hiệu kề nhau.
 
 ```verilog
 always @(*) begin
@@ -446,9 +457,9 @@ always @(*) begin
 end
 ```
 
-**Tái dùng phần cứng:** comparator `==` dùng cho cả RLE và input subtractor Delta; subtractor `−` dùng cho cả Delta compress và LZC → tiết kiệm diện tích.
+Ba chỉ số này tương ứng đúng với ba thuật toán nén: nhiều số 0 thì hợp với zero-suppression, nhiều cặp trùng thì hợp với RLE, hiệu nhỏ thì hợp với delta. Phần cứng đo được chúng gần như miễn phí vì comparator dùng cho RLE cũng chính là đầu vào của subtractor cho delta, còn subtractor thì dùng chung giữa việc tính hiệu và việc đo bề rộng bit.
 
-#### Priority logic — Chọn mode
+#### Chọn mode
 
 ```verilog
 if (zero_cnt >= tau1_r)     mode_sel = MODE_ZERO;   // 00
@@ -457,9 +468,11 @@ else if (delta_w <= wmax_r) mode_sel = MODE_DELTA;  // 10
 else                        mode_sel = MODE_RAW;    // 11
 ```
 
-**Ngưỡng mặc định:** `TAU1=TAU2=WMAX=8` (cấu hình qua `op_b` của PDETECT).
+Ngưỡng mặc định `TAU1 = TAU2 = WMAX = 8`, nhưng phần mềm có thể ghi đè qua toán hạng `op_b` của lệnh PDETECT. Thứ tự ưu tiên đặt ZERO lên đầu vì khi block thưa thì zero-suppression gần như luôn thắng, và đặt RAW cuối cùng như lối thoát khi không thuật toán nào có lợi.
 
-#### `det_word` — Gói 4 thông tin vào 1 word 32-bit
+#### `det_word`
+
+Bốn thông tin được gói vào một word 32-bit để trả về register file trong một lệnh duy nhất:
 
 ```
 bit[1:0]   = mode      (00/01/10/11)
@@ -469,21 +482,22 @@ bit[21:16] = delta_w   (0–63)
 bit[31:22] = 0
 ```
 
-#### FSM 3 state (`S_IDLE → S_LOAD → S_DONE`)
+Phần mềm thường chỉ cần 2 bit mode, ba trường còn lại hữu ích khi debug hoặc khi muốn tự viết chính sách chọn mode khác.
 
-- `S_LOAD`: nạp N word vào `wbuf[]` (N cycles).
-- `S_DONE`: 3 chỉ số tính tổ hợp → latch `mode`, `det_word`; `done=1`.
+FSM ba trạng thái: `S_LOAD` nạp N word (tốn N cycle), `S_DONE` chốt kết quả tổ hợp lại và bật `done`.
 
-### 6.10 Thêm 10 — Wiring trong `cpu_top.v`
+### 6.10 Nối dây trong `cpu_top.v`
 
-3 wire mới cho accel write path:
+Ba wire mới cho đường ghi của accelerator:
+
 ```verilog
 wire accel_spad_we;
 wire [7:0] accel_spad_waddr;
 wire [31:0] accel_spad_wdata;
 ```
 
-Scratchpad kết nối dual-port:
+Và scratchpad được nối cả hai cổng:
+
 ```verilog
 scratchpad u_scratchpad (
     .we0(spad_we), .waddr0(spad_waddr), .wdata0(spad_wdata), .wstrb0(spad_wstrb),
@@ -492,9 +506,11 @@ scratchpad u_scratchpad (
 );
 ```
 
-### 6.11 Thêm 11 — Software Layer (HW/SW Co-design)
+### 6.11 Lớp phần mềm
 
-#### `compress_api.h` — Wrapper C cho 3 custom instruction
+#### `compress_api.h`
+
+Ba lệnh custom được bọc lại thành hàm C bằng inline assembly, dùng directive `.insn` nên không cần sửa compiler:
 
 ```c
 // CSTAT: đọc status (1 instruction, combinational result)
@@ -525,7 +541,8 @@ static inline uint32_t compress_block(uint32_t src, uint32_t dest_mode) {
 }
 ```
 
-**Macro bóc tách CSTAT:**
+Kèm theo là các macro bóc tách bit:
+
 ```c
 #define CSTAT_DONE(s)    (((s) >> 30) & 1u)
 #define CSTAT_RESULT(s)  ((s) & 0x0FFFFFFFu)
@@ -535,7 +552,9 @@ static inline uint32_t compress_block(uint32_t src, uint32_t dest_mode) {
 #define DET_DELTAW(r)    (((r) >> 16) & 0x3Fu)
 ```
 
-#### `demo_pipeline.c` — Vòng lặp detect→choose→compress
+#### `demo_pipeline.c`
+
+Toàn bộ vòng lặp ứng dụng gọn trong mười dòng, và đó là điểm mấu chốt: phần mềm không hề biết ZERO, RLE hay DELTA là gì, nó chỉ chuyển tiếp mode mà phần cứng trả về:
 
 ```c
 void run_pipeline(void) {
@@ -550,20 +569,16 @@ void run_pipeline(void) {
 }
 ```
 
-#### `asm_riscv.py` — Assembler Python thay RISC-V GCC
+#### `asm_riscv.py`
 
-Vì máy không có `riscv32-unknown-elf-gcc`, một assembler Python 2-pass được viết hỗ trợ:
-- RV32I subset (ADDI, LUI, SW, LW, BEQ, BNE, JAL, SLL, SRL, ANDI, OR, ADD)
-- 3 custom instruction: `pdetect rd,rs1,rs2` / `ccompr rs1,rs2` / `cstat rd`
-- Sinh `demo_pipeline.hex` (256 word, padding 0)
+Máy phát triển không có `riscv32-unknown-elf-gcc`, nên dự án tự viết một assembler Python hai lượt để vẫn chạy được chương trình thật trên simulation. Nó hỗ trợ tập con RV32I (ADDI, LUI, SW, LW, BEQ, BNE, JAL, SLL, SRL, ANDI, OR, ADD) cùng ba lệnh custom viết dưới dạng `pdetect rd,rs1,rs2`, `ccompr rs1,rs2` và `cstat rd`, rồi sinh ra `demo_pipeline.hex` gồm 256 word có padding 0.
 
 ---
 
-## 7. Custom Instruction Encoding
+## 7. Mã hóa lệnh custom
 
-**Opcode:** `0x0B = 7'b0001011` (RISC-V custom-0, dành cho user extension)
+Cả ba lệnh dùng opcode `0x0B = 7'b0001011`, tức custom-0 mà RISC-V dành riêng cho phần mở rộng của người dùng, và đều theo R-type format:
 
-**R-type format:**
 ```
 [31:25]   [24:20]  [19:15]  [14:12]  [11:7]  [6:0]
 funct7=0  rs2      rs1      funct3   rd      0001011
@@ -575,7 +590,8 @@ funct7=0  rs2      rs1      funct3   rd      0001011
 | `ccompr rs1,rs2` | 001 | src_addr | dst\|mode | x0 | Nén 1 block |
 | `cstat rd` | 010 | x0 | x0 | status | Poll status |
 
-**CSTAT word:**
+Cấu trúc word trạng thái trả về bởi CSTAT:
+
 ```
 bit[31]   = busy
 bit[30]   = done   ← SW poll cái này (beq/bne loop)
@@ -584,7 +600,8 @@ bit[28]   = last_op  (0=compress, 1=detect)
 bit[27:0] = last_result (out_len hoặc det_word)
 ```
 
-**det_word:**
+Cấu trúc `det_word` trả về bởi PDETECT:
+
 ```
 bit[1:0]   = mode      00=ZERO  01=RLE  10=DELTA  11=RAW
 bit[7:2]   = zero_cnt
@@ -592,7 +609,8 @@ bit[13:8]  = run_cnt
 bit[21:16] = delta_w
 ```
 
-**Compression mode encoding trong `op_b[1:0]`:**
+Và mã mode nhét trong hai bit thấp của `op_b`:
+
 ```
 00 = ZERO   (zero-suppression + bitmap)
 01 = RLE    (run-length encoding)
@@ -602,9 +620,9 @@ bit[21:16] = delta_w
 
 ---
 
-## 8. HW/SW Co-Design Flow
+## 8. Luồng HW/SW co-design
 
-Vòng lặp cho 1 block (assembly tương đương):
+Dưới đây là toàn bộ vòng xử lý một block, viết bằng assembly để thấy rõ từng lệnh:
 
 ```asm
 # ① PDETECT: kích detector chạy N=16 cycle load + 1 cycle compute
@@ -637,13 +655,13 @@ slli  x19, x18, 2           # out_len × 4 byte
 add   x5,  x5, x19          # dst += out_len*4
 ```
 
-**Mô hình poll (no-stall):** Pipeline không stall theo `custom_busy`. SW tự poll CSTAT. Đã verified: detector chạy ~18 cycles, nén chạy 16–35 cycles tùy mode.
+Thiết kế chọn mô hình poll thay vì cho pipeline tự stall theo `custom_busy`. Lý do là stall handshake đòi hỏi sửa `hazard_unit` và làm phức tạp phần đã verify xong, trong khi vòng poll bằng phần mềm đã đủ đúng — detector chạy khoảng 18 cycle và phần nén chạy 16 đến 35 cycle tùy mode, đều ngắn hơn thời gian phần mềm quay lại kiểm tra.
 
 ---
 
-## 9. Kết quả Verification
+## 9. Kết quả verification
 
-### Unit tests (ModelSim)
+### Unit test
 
 | Testbench | Module | Kết quả |
 |-----------|--------|---------|
@@ -651,59 +669,53 @@ add   x5,  x5, x19          # dst += out_len*4
 | `tb_comp_rle.v` | `comp_rle.v` | PASS (256 block, EXP_LEN=4318) |
 | `tb_comp_delta.v` | `comp_delta.v` | PASS (256 block, EXP_LEN=2526) |
 | `tb_pattern_detect.v` | `pattern_detect.v` | PASS (256 block, khớp golden) |
-| `tb_cpu_top.v` | Toàn bộ pipeline | PASS (37 test cases) |
+| `tb_cpu_top.v` | Toàn bộ pipeline | PASS (37 test case) |
 
-### Integration test (ModelSim)
+### Integration test
 
-| Testbench | Kết quả |
-|-----------|---------|
-| `tb_demo_pipeline.v` | PASS — detector chọn đúng [ZERO,RLE,DELTA]; out_len=[5,5,6]; scratchpad[48..63] khớp golden |
+`tb_demo_pipeline.v` chạy trọn vòng detect–chọn–nén trên ba block có đặc tính khác nhau. Detector chọn đúng lần lượt ZERO, RLE, DELTA; độ dài đầu ra lần lượt là 5, 5, 6 word; và nội dung `scratchpad[48..63]` khớp golden model.
 
-### GĐ4 — Verification chặt
+### Golden-match qua dispatcher
 
-**4.1 — Golden-match testbench tự động** (`tb_compress_top.v`): drive `compress_accel` dispatcher qua custom instruction CCOMPR cho cả 3 mode (đúng đường mà CPU dùng), so output từng word với golden:
+`tb_compress_top.v` không gọi thẳng từng module nén mà đi qua đúng con đường mà CPU dùng, tức qua lệnh CCOMPR và bộ điều phối. Đây là điểm quan trọng: nếu chỉ test từng module riêng lẻ thì một lỗi ở phần điều phối vẫn lọt.
 
 | Mode | Word ghi ra | Kết quả |
 |------|-------------|---------|
-| ZERO | 3216 | PASS == golden |
-| RLE | 4318 | PASS == golden |
-| DELTA | 2526 | PASS == golden |
+| ZERO | 3216 | khớp golden |
+| RLE | 4318 | khớp golden |
+| DELTA | 2526 | khớp golden |
 
-→ `[PASS] RTL nén (qua CCOMPR dispatcher) == golden cả 3 mode, 256 block.`
+### Round-trip lossless
 
-**4.2 — Round-trip lossless** (`golden_compress.py --roundtrip`): viết bộ giải nén `decompress_zero/rle/delta`, kiểm `decompress(compress(x)) == x` trên toàn bộ 256 block:
+Chỉ so khớp với golden model thì chưa đủ để khẳng định không mất dữ liệu — nếu golden model sai thì RTL sai theo mà vẫn báo PASS. Vì vậy `golden_compress.py --roundtrip` có thêm bộ giải nén `decompress_zero/rle/delta` và kiểm tra `decompress(compress(x)) == x` trên toàn bộ 256 block:
 
-| Mode | PASS | FAIL | Kết quả |
-|------|------|------|---------|
-| ZERO | 256 | 0 | LOSSLESS |
-| RLE | 256 | 0 | LOSSLESS |
-| DELTA | 256 | 0 | LOSSLESS |
-| ADAPTIVE | 256 | 0 | LOSSLESS |
+| Mode | PASS | FAIL |
+|------|------|------|
+| ZERO | 256 | 0 |
+| RLE | 256 | 0 |
+| DELTA | 256 | 0 |
+| ADAPTIVE | 256 | 0 |
 
-→ `[PASS] Round-trip lossless 100%: decompress(compress(x)) == x trên toàn bộ 256 block, cả 3 mode + adaptive.`
+Ghép hai kết quả lại thì có đủ cơ sở kết luận: RTL sinh ra đúng `compress(x)` (chứng minh ở phần trên), và `decompress(compress(x))` bằng `x` (chứng minh ở phần này), nên đầu ra của RTL giải nén lại đúng dữ liệu gốc.
 
-Vì RTL đã được verify byte-by-byte = `compress(x)` (4.1) và `decompress(compress(x)) = x` (4.2), suy ra **output RTL giải nén lại đúng dữ liệu gốc** — chứng minh lossless hoàn chỉnh.
-
-### Compression ratio (golden_compress.py trên 256-block mixed dataset)
+### Tỉ số nén trên dataset hỗn hợp
 
 | Mode | Ratio |
 |------|-------|
 | ZERO-only | ~1.5× |
 | RLE-only | ~0.9× |
 | DELTA-only | 1.622× |
-| **ADAPTIVE** (detector chọn/block) | **2.835×** |
+| ADAPTIVE | 2.835× |
 
-Phân bố mode trên mixed: ZERO=99 block / RLE=77 block / DELTA=80 block.
+Trên 256 block của dataset này, detector chọn ZERO cho 99 block, RLE cho 77 block và DELTA cho 80 block.
 
 ---
 
-## 10. Đánh giá — Evaluation (GĐ5 + GĐ6)
+## 10. Đánh giá
 
-### 10.0 — Synthesis FPGA (GĐ5): area / timing / power
+### 10.1 Synthesis FPGA
 
-Synth + implement toàn thiết kế (`fpga_top` = cpu_top + accel + detector) trên **Nexys A7-100T (xc7a100tcsg324-1)** bằng Vivado 2025.2 (`synth_phase5.tcl`).
-
-**Utilization (post-implementation, detector đã tối ưu):**
+Toàn bộ thiết kế (`fpga_top` gồm cpu_top, accelerator và detector) được synth và implement trên Nexys A7-100T (xc7a100tcsg324-1) bằng Vivado 2025.2, script `synth_phase5.tcl`.
 
 | Tài nguyên | Dùng | Có sẵn | % |
 |-----------|------|--------|---|
@@ -712,38 +724,36 @@ Synth + implement toàn thiết kế (`fpga_top` = cpu_top + accel + detector) t
 | Block RAM | 0 | 135 | 0% |
 | DSP | 0 | 240 | 0% |
 
-> Các bộ nhớ (imem/data_mem/scratchpad 256 word) suy ra thành **distributed LUTRAM**, không dùng BRAM.
-
-**Timing & Power:**
+Không có BRAM nào được dùng vì cả ba khối nhớ (instruction memory, data memory và scratchpad, mỗi cái 256 word) đều nhỏ và được Vivado suy ra thành distributed LUTRAM.
 
 | Chỉ số | Giá trị |
 |--------|---------|
 | Clock target | 100 MHz (10.00 ns) |
 | WNS (setup) | −1.816 ns |
-| **Fmax đạt được** | **84.6 MHz** |
-| Path tới hạn | `u_detect`: li → delta_acc (LZC trên hiệu kề), 11.5ns, 19 logic levels |
-| Total On-Chip Power | **0.164 W** (dynamic 0.066 + static 0.097, confidence Medium) |
+| Fmax đạt được | 84.6 MHz |
+| Path tới hạn | `u_detect`: li → delta_acc (LZC trên hiệu kề), 11.5 ns, 19 logic level |
+| Total On-Chip Power | 0.164 W (dynamic 0.066 + static 0.097, confidence Medium) |
 
-### 10.0b — Tối ưu detector + chi phí detection (GĐ5.2) — before/after
+### 10.2 Tối ưu detector
 
-**Vấn đề phát hiện qua synth lần đầu:** bản detector "naive" tính 3 chỉ số (15 subtractor + 15 LZC `sbits` + comparator) **tổ hợp trong 1 cycle** với buffer riêng → vừa to nhất vừa là path tới hạn.
+Lần synth đầu tiên phơi ra một vấn đề đáng kể. Bản detector ban đầu tính cả ba chỉ số trong một chu kỳ tổ hợp, nghĩa là cần 15 subtractor, 15 khối `sbits` chạy song song cùng một comparator, cộng thêm một buffer riêng để giữ dữ liệu. Kết quả là khối lẽ ra nhỏ nhất lại trở thành khối to nhất trong accelerator, đồng thời nằm trên critical path và kéo Fmax xuống.
 
-**Tối ưu (streaming):** tính **tăng dần** ngay khi từng word chảy vào trong N cycle nạp → chỉ **1 subtractor + 1 LZC tái dùng 15 lần**, **bỏ hẳn buffer** (detector chỉ sinh `det_word`, không cần lưu data). Giữ nguyên latency 17 cycle và `det_word` **bit-exact** (tb_pattern_detect vẫn PASS 256 block).
+Cách sửa là chuyển sang tính tăng dần: thay vì đợi nạp xong rồi tính một lượt, ta cập nhật ba chỉ số ngay khi từng word chảy vào trong N cycle nạp. Như vậy chỉ cần một subtractor và một khối LZC dùng lại 15 lần, và buffer bỏ được hoàn toàn vì detector chỉ sinh ra `det_word` chứ không cần giữ dữ liệu. Latency vẫn giữ nguyên 17 cycle và `det_word` vẫn bit-exact, nên `tb_pattern_detect` vẫn PASS đủ 256 block.
 
-| Chỉ số | Naive (1 cycle tổ hợp) | **Streaming (tối ưu)** | Cải thiện |
-|--------|------------------------|------------------------|-----------|
-| Detector LUT | 1690 | **113** | **−93% (15×)** |
-| Detector FF | 565 | **105** | −81% |
-| Detector % accelerator | 55% | **7.5%** | |
-| Detector % toàn CPU | 31% | **2.8%** | |
+| Chỉ số | Naive (1 cycle tổ hợp) | Streaming (tối ưu) | Cải thiện |
+|--------|------------------------|--------------------|-----------|
+| Detector LUT | 1690 | 113 | −93% (15×) |
+| Detector FF | 565 | 105 | −81% |
+| Detector % accelerator | 55% | 7.5% | |
+| Detector % toàn CPU | 31% | 2.8% | |
 | Accelerator LUT | 3045 | 1514 | −50% |
 | System LUT | 5403 | 4066 | −24.7% |
 | System FF | 3398 | 2948 | −13.2% |
-| **Fmax** | 45.3 MHz | **84.6 MHz** | **+87%** |
+| Fmax | 45.3 MHz | 84.6 MHz | +87% |
 | Latency PDETECT | 17 cyc | 17 cyc | giữ nguyên |
 | det_word | — | bit-exact | y hệt |
 
-**Hierarchical utilization (sau tối ưu):**
+Phân bổ tài nguyên sau khi tối ưu:
 
 | Khối | LUT | FF |
 |------|-----|----|
@@ -752,52 +762,51 @@ Synth + implement toàn thiết kế (`fpga_top` = cpu_top + accel + detector) t
 | &nbsp;&nbsp;├ `u_zero` | 134 | 58 |
 | &nbsp;&nbsp;├ `u_rle` | 285 | 640 |
 | &nbsp;&nbsp;├ `u_delta` | 978 | 544 |
-| &nbsp;&nbsp;└ **`u_detect`** | **113** | **105** |
+| &nbsp;&nbsp;└ `u_detect` | 113 | 105 |
 
-**Kết luận (luận điểm cho bài):** sau tối ưu, detector là **khối NHỎ NHẤT** trong accelerator (113 LUT) — chỉ **2.8% diện tích CPU** — đúng tinh thần "**siêu nhẹ**" của novelty. Bảng before/after là bằng chứng định lượng cho mẹo "tái dùng phần cứng" (GĐ1) và phản bác trực diện rủi ro "detection ăn hết lợi ích". Báo cáo gốc lưu ở `../BaoCao/phase5_reports/` (sau tối ưu) và `../BaoCao/phase5_reports_naive/` (trước tối ưu) — xem [mục 14](#14-các-file-không-nằm-trong-repo).
+Con số cuối cùng đáng chú ý ở chỗ detector giờ là khối nhỏ nhất trong accelerator, chỉ 113 LUT tương đương 2.8% diện tích CPU. Phản biện dễ gặp nhất với ý tưởng "để phần cứng tự chọn mode" là chi phí của khối detect sẽ ăn hết phần lợi thu được từ việc chọn đúng, và bảng before/after ở trên là câu trả lời định lượng cho phản biện đó. Báo cáo Vivado gốc nằm ở `../BaoCao/phase5_reports/` cho bản sau tối ưu và `../BaoCao/phase5_reports_naive/` cho bản trước.
 
----
+### 10.3 Ba dataset tương phản
 
-### 10.1 — Ba dataset tương phản (`gen_datasets.py`)
-
-Sinh 3 bộ dữ liệu đặc tính khác hẳn nhau (128 block/bộ), mô phỏng domain thật:
+`gen_datasets.py` sinh ba bộ dữ liệu 128 block mỗi bộ, mỗi bộ mô phỏng một loại dữ liệu thật khác nhau:
 
 | Dataset | Đặc tính | Mô phỏng | Detector chọn |
 |---------|----------|----------|---------------|
 | `zero_heavy` | 1–4 word ≠ 0, còn lại = 0 | feature map TinyML thưa | ZERO = 128/128 |
-| `repetitive` | vài run dài | mask / ảnh nhị phân | RLE = 128/128 |
+| `repetitive` | vài run dài | mask, ảnh nhị phân | RLE = 128/128 |
 | `slow_varying` | hiệu kề nhỏ [-8,8] | telemetry cảm biến | DELTA = 128/128 |
 
-→ **Detector chọn đúng mode 100%** trên mỗi dataset thuần.
+Trên cả ba bộ, detector chọn đúng mode với tỉ lệ 100%.
 
-### 10.2 — Sweep compression-ratio (`eval_paper.py`)
+### 10.4 Sweep tỉ số nén
 
-Bảng (dataset × method), ratio = word gốc / word nén (cao = tốt; <1 = phình to):
+`eval_paper.py` chạy mọi tổ hợp dataset và phương pháp. Ratio tính bằng số word gốc chia số word sau nén, nên càng cao càng tốt và dưới 1 nghĩa là dữ liệu phình ra:
 
-| Dataset | RAW | ZERO-only | RLE-only | DELTA-only | **ADAPTIVE** |
-|---------|-----|-----------|----------|------------|--------------|
-| zero_heavy | 1.000× | **4.541×** | 1.356× | 0.941× | **4.541×** |
-| repetitive | 1.000× | 0.941× | **2.709×** | 0.941× | **2.709×** |
-| slow_varying | 1.000× | 0.941× | 0.513× | **2.667×** | **2.667×** |
-| mixed | 1.000× | 1.274× | 0.949× | 1.622× | **2.835×** |
+| Dataset | RAW | ZERO-only | RLE-only | DELTA-only | ADAPTIVE |
+|---------|-----|-----------|----------|------------|----------|
+| zero_heavy | 1.000× | 4.541× | 1.356× | 0.941× | 4.541× |
+| repetitive | 1.000× | 0.941× | 2.709× | 0.941× | 2.709× |
+| slow_varying | 1.000× | 0.941× | 0.513× | 2.667× | 2.667× |
+| mixed | 1.000× | 1.274× | 0.949× | 1.622× | 2.835× |
 
-**Kết luận chính (Figure thuyết phục nhất):**
-- Trên mỗi dataset thuần: ADAPTIVE = best single-mode (**+0.0%** — chọn tối ưu từng block).
-- Trên `mixed` (hỗn hợp): ADAPTIVE = 2.835× **thắng best-fixed (DELTA 1.622×) +74.8%** — vì không mode cố định nào tốt cho luồng dữ liệu đa đặc tính.
-- **Mọi single-mode đều PHÌNH dữ liệu** (ratio < 1) trên ít nhất 1 dataset (RLE-only phình `slow_varying` xuống 0.513× — gần gấp đôi kích thước). ADAPTIVE không bao giờ < 2.667×.
+Bảng này nói được ba điều.
 
-→ Đây chính là bằng chứng định lượng cho luận điểm "multi-mode + detection" có giá trị thật (đáp trả rủi ro reviewer "single-mode là đủ").
+Thứ nhất, trên từng dataset thuần, cột ADAPTIVE bằng đúng cột tốt nhất, không hơn không kém. Điều đó xác nhận detector không chọn nhầm và cũng không tốn phí gì về mặt tỉ số nén.
 
-### 10.3 — Throughput cycle-accurate (`tb_throughput.v`, đo từ RTL)
+Thứ hai, trên dataset hỗn hợp, ADAPTIVE đạt 2.835× so với 1.622× của mode cố định tốt nhất, hơn 74.8%. Khoảng cách này chỉ xuất hiện khi luồng dữ liệu có nhiều đặc tính trộn lẫn, và đó chính là tình huống thực tế mà một thiết bị edge phải xử lý.
+
+Thứ ba, mọi mode cố định đều làm phình dữ liệu trên ít nhất một dataset. Nặng nhất là RLE-only trên `slow_varying`, tụt xuống 0.513× tức gần gấp đôi kích thước ban đầu. ADAPTIVE không bao giờ xuống dưới 2.667×. Với một hệ thống nhúng thật, việc đảm bảo không bao giờ phình dữ liệu có khi còn quan trọng hơn con số tỉ số nén trung bình.
+
+### 10.5 Throughput đo từ RTL
 
 | Op | Latency (cycle) | out_len (word) |
 |----|-----------------|----------------|
-| PDETECT | 17 (≈ N+1, data-independent) | — |
+| PDETECT | 17 (≈ N+1, không phụ thuộc dữ liệu) | — |
 | CCOMPR ZERO | 17 | 5 |
 | CCOMPR RLE | 37 | 5 |
 | CCOMPR DELTA | 23 | 6 |
 
-**End-to-end (detect + compress) / block — throughput byte vào / cycle:**
+Ghép detect và compress lại thành thời gian xử lý trọn một block:
 
 | Mode | detect + compress = total | Throughput |
 |------|---------------------------|------------|
@@ -805,35 +814,33 @@ Bảng (dataset × method), ratio = word gốc / word nén (cao = tốt; <1 = ph
 | RLE | 17 + 37 = 54 cycle | 1.185 byte/cycle |
 | DELTA | 17 + 23 = 40 cycle | 1.600 byte/cycle |
 
-> Đây là số liệu **đo bằng sim** (không phải ước lượng). So với software-only trên cùng core (vòng lặp ~16 word × nhiều lệnh/word + load-use stall, ước tính ~140 cycle/block cho zero-suppression) → accelerator nhanh **~4× end-to-end**. Con số software-only chính xác sẽ được **đo** bằng cách chạy bản nén assembly trên `cpu_top` (follow-up).
->
-> **Năng lượng/byte** = power × thời gian / byte cần Vivado Power Report → thuộc **GĐ5** (Vivado chưa cài đầy đủ trên máy).
+Đây là số đo trực tiếp từ simulation chứ không phải ước lượng. Để so sánh, một vòng nén viết thuần bằng phần mềm trên cùng lõi này cần khoảng 16 word nhân với vài lệnh mỗi word, cộng thêm load-use stall, ước chừng 140 cycle mỗi block cho zero-suppression, tức accelerator nhanh hơn khoảng 4 lần. Con số software-only chính xác cần đo bằng cách chạy bản nén assembly trên `cpu_top`, và đó là việc còn dang dở.
 
 ---
 
 ## 11. Cấu trúc file
 
-> Repo chỉ chứa **source + script + dataset nhỏ** (~0.8 MB). File build (Vivado/ModelSim), dataset thô 144 MB và các bản báo cáo đã được tách ra — xem [mục 13](#13-dữ-liệu-lớn--cách-tái-tạo) và [mục 14](#14-các-file-không-nằm-trong-repo).
+Repo chỉ chứa source, script và dataset cỡ nhỏ, tổng cộng khoảng 0.8 MB. Các file do Vivado và ModelSim sinh ra, dataset thô 144 MB cùng các bản báo cáo đều nằm ngoài repo; mục 13 nói cách lấy lại chúng.
 
 ```
 32bit_RISCV/
 ├── --- RISC-V pipeline (gốc, có mở rộng) ---
 │   ├── if_stage.v             IF stage + instruction_memory
 │   ├── if_id_reg.v            IF/ID pipeline register
-│   ├── id_stage.v             ID stage + RegFile + Decoder      [MỞ RỘNG]
-│   ├── id_ex_reg.v            ID/EX pipeline register           [MỞ RỘNG]
+│   ├── id_stage.v             ID stage + RegFile + Decoder      [mở rộng]
+│   ├── id_ex_reg.v            ID/EX pipeline register           [mở rộng]
 │   ├── ex_stage.v             EX stage + ALU + Branch
-│   ├── mem_stage.v            MEM stage + data_mem              [MỞ RỘNG]
+│   ├── mem_stage.v            MEM stage + data_mem              [mở rộng]
 │   ├── wb_hazard_fwd.v        WB + Hazard unit + Forwarding unit
 │   ├── pipeline_regs.v        EX/MEM + MEM/WB registers
-│   └── cpu_top.v              Top-level kết nối                 [MỞ RỘNG]
+│   └── cpu_top.v              Top-level kết nối                 [mở rộng]
 │
 ├── --- Accelerator (thêm mới) ---
 │   ├── Compress_accel.v       Dispatcher FSM + điều phối 4 sub-module
 │   ├── comp_zero.v            Zero-suppression compressor
 │   ├── comp_rle.v             Run-length encoding compressor
 │   ├── comp_delta.v           Delta encoding compressor
-│   ├── pattern_detect.v       Pattern detector (NOVELTY)
+│   ├── pattern_detect.v       Pattern detector
 │   └── scratchpad.v           Dual-port SRAM
 │
 ├── --- FPGA / Nexys A7 ---
@@ -846,109 +853,108 @@ Bảng (dataset × method), ratio = word gốc / word nén (cao = tốt; <1 = ph
 │   ├── nexys_a7.xdc           Constraints cơ bản
 │   └── nexys_a7_uart.xdc      Constraints có UART
 │
-├── --- Testbenches ---
+├── --- Testbench ---
 │   ├── tb_if_stage.v  tb_id_stage.v  tb_ex_stage.v  tb_mem_stage.v
 │   │                          Unit test từng pipeline stage
 │   ├── tb_cpu_top.v           Smoke test toàn core
 │   ├── tb_comp_zero.v  tb_comp_rle.v  tb_comp_delta.v
-│   │                          Unit test 3 compressor (golden-match)
+│   │                          Unit test 3 compressor (so với golden)
 │   ├── tb_pattern_detect.v    Unit test detector
-│   ├── tb_compress_top.v      Golden-match qua dispatcher, 3 mode × 256 block
-│   ├── tb_demo_pipeline.v     Integration end-to-end (detect→chọn→nén)
+│   ├── tb_compress_top.v      So golden qua dispatcher, 3 mode × 256 block
+│   ├── tb_demo_pipeline.v     Integration end-to-end (detect, chọn, nén)
 │   ├── tb_demo_sparse.v       Integration trên dữ liệu thưa
 │   ├── tb_throughput.v        Đo throughput cycle-accurate
 │   ├── tb_cyc_display.v       In cycle count từng mode
 │   ├── tb_sw_baseline.v       Baseline nén thuần software trên core
-│   ├── tb_lec_baseline.v      Baseline LEC (so sánh thuật toán khác)
+│   ├── tb_lec_baseline.v      Baseline LEC để so thuật toán khác
 │   ├── tb_uart_tx.v           Unit test UART TX
 │   └── tb_fpga_top_uart.v     Integration FPGA top + UART
 │
-├── --- Golden model + sinh dữ liệu ---
-│   ├── golden_compress.py     Golden model (3 mode + detector + decompress + round-trip)
-│   ├── gen_demo.py            Sinh demo_src.hex + demo_expected_dest.hex
+├── --- Golden model và sinh dữ liệu ---
+│   ├── golden_compress.py     Golden model: 3 mode, detector, giải nén, round-trip
+│   ├── gen_demo.py            Sinh demo_src.hex và demo_expected_dest.hex
 │   ├── gen_datasets.py        Sinh 3 dataset tổng hợp tương phản
-│   ├── gen_real_datasets.py   Cắt dataset thật → real_*.hex (bản nhỏ, có trong repo)
-│   └── gen_real_datasets_full.py  Sinh real_*_full.hex từ data.txt (KHÔNG có trong repo)
+│   ├── gen_real_datasets.py   Cắt dataset thật thành real_*.hex (bản nhỏ, có trong repo)
+│   └── gen_real_datasets_full.py  Sinh real_*_full.hex từ data.txt (không có trong repo)
 │
-├── --- Assembler + Evaluation ---
-│   ├── asm_riscv.py           Assembler Python (thay RISC-V GCC)
+├── --- Assembler và evaluation ---
+│   ├── asm_riscv.py           Assembler Python thay cho RISC-V GCC
 │   ├── asm_sw_baseline.py     Sinh chương trình baseline software
 │   ├── asm_lec_baseline.py    Sinh chương trình baseline LEC
 │   ├── asm_uart_demo.py       Sinh chương trình demo UART
-│   ├── eval_paper.py          Sweep compression-ratio chính cho paper
-│   ├── eval_baselines.py      So sánh với gzip/zlib/LEC
-│   ├── eval_composability.py  Đánh giá khả năng ghép mode
-│   ├── eval_lec_winner.py     Phân tích khi nào LEC thắng
+│   ├── eval_paper.py          Sweep tỉ số nén chính dùng cho paper
+│   ├── eval_baselines.py      So sánh với gzip, zlib, LEC
+│   ├── eval_composability.py  Đánh giá khả năng ghép nhiều mode
+│   ├── eval_lec_winner.py     Phân tích các trường hợp LEC thắng
 │   ├── verify_paper_numbers.py  Kiểm tra chéo mọi con số trong paper
-│   └── read_uart_demo.py      Đọc stream UART từ board qua COM port
+│   └── read_uart_demo.py      Đọc stream UART từ board qua cổng COM
 │
-├── --- Software layer ---
-│   ├── compress_api.h         C wrapper cho 3 custom instruction
-│   └── demo_pipeline.c        Demo end-to-end (cần RISC-V GCC)
+├── --- Lớp phần mềm ---
+│   ├── compress_api.h         Wrapper C cho 3 lệnh custom
+│   └── demo_pipeline.c        Demo end-to-end (cần RISC-V GCC để biên dịch)
 │
 ├── --- Script chạy tự động ---
-│   ├── run_modelsim.do        Chạy full regression ModelSim
+│   ├── run_modelsim.do        Chạy full regression trên ModelSim
 │   ├── run_modelsim_unit.do   Chạy riêng unit test
 │   ├── run_modelsim_lec.do    Chạy riêng baseline LEC
-│   ├── synth_phase5.tcl       Vivado: synth + impl + report GĐ5
-│   ├── synth_paper.tcl        Vivado: build cấu hình dùng cho paper
+│   ├── synth_phase5.tcl       Vivado: synth, impl và xuất report
+│   ├── synth_paper.tcl        Vivado: build cấu hình dùng trong paper
 │   ├── synth_uart_demo.tcl    Vivado: build bản demo UART
 │   └── synth_fmaxtest.tcl     Vivado: quét Fmax
 │
-├── --- Dataset (nhỏ, có trong repo) ---
+├── --- Dataset nhỏ (có trong repo) ---
 │   ├── dataset_zero_heavy.hex  dataset_repetitive.hex  dataset_slow_varying.hex
 │   │                          3 dataset tổng hợp tương phản
 │   ├── real_temp.hex  real_volt.hex  real_light.hex  real_mixed.hex
-│   │                          Dataset thật đã cắt (20K word mỗi file)
-│   ├── tb_src_mixed.hex       256-block mixed dataset nguồn
-│   ├── tb_expected_zero_mixed.hex   Golden output ZERO mode
-│   ├── tb_expected_rle_mixed.hex    Golden output RLE mode
-│   ├── tb_expected_delta_mixed.hex  Golden output DELTA mode
-│   ├── tb_expected_detect_mixed.hex Golden det_word 256 block
-│   ├── demo_src.hex           3 block tương phản nguồn
-│   ├── demo_expected_dest.hex Golden output demo
+│   │                          Dataset thật đã cắt, 20K word mỗi file
+│   ├── tb_src_mixed.hex       Dataset nguồn 256 block hỗn hợp
+│   ├── tb_expected_zero_mixed.hex   Golden output mode ZERO
+│   ├── tb_expected_rle_mixed.hex    Golden output mode RLE
+│   ├── tb_expected_delta_mixed.hex  Golden output mode DELTA
+│   ├── tb_expected_detect_mixed.hex Golden det_word cho 256 block
+│   ├── demo_src.hex           3 block tương phản làm nguồn cho demo
+│   ├── demo_expected_dest.hex Golden output của demo
 │   └── uart_demo_src.hex      Nguồn cho demo UART
 │
 ├── --- Program image (sinh từ assembler) ---
-│   ├── mem_program.hex        Program cho cpu_top
-│   ├── demo_pipeline.hex      Program demo end-to-end
-│   ├── sw_baseline.hex        Program baseline software
-│   ├── lec_baseline.hex       Program baseline LEC
-│   └── uart_demo.hex          Program demo UART
+│   ├── mem_program.hex        Chương trình cho cpu_top
+│   ├── demo_pipeline.hex      Chương trình demo end-to-end
+│   ├── sw_baseline.hex        Chương trình baseline software
+│   ├── lec_baseline.hex       Chương trình baseline LEC
+│   └── uart_demo.hex          Chương trình demo UART
 │
-├── --- Kết quả đo (commit để tra cứu) ---
-│   ├── eval_paper_sweep.csv        Bảng sweep ratio đầy đủ
-│   ├── eval_paper_policy.csv       So sánh policy chọn mode
-│   ├── eval_baselines_results.csv  Kết quả so với gzip/zlib/LEC
-│   ├── real_result.csv             Mode + ratio từng block trên dataset thật
-│   ├── dfx_runtime.txt             Thời gian reconfig runtime
-│   ├── tight_setup_hold_pins.txt   Pin có setup/hold sát ngưỡng
+├── --- Kết quả đo ---
+│   ├── eval_paper_sweep.csv        Bảng sweep tỉ số nén đầy đủ
+│   ├── eval_paper_policy.csv       So sánh các chính sách chọn mode
+│   ├── eval_baselines_results.csv  Kết quả so với gzip, zlib, LEC
+│   ├── real_result.csv             Mode và ratio từng block trên dataset thật
+│   ├── dfx_runtime.txt             Thời gian reconfig lúc chạy
+│   ├── tight_setup_hold_pins.txt   Các pin có setup/hold sát ngưỡng
 │   └── demo_expected.txt           Output mong đợi của demo
 │
 └── --- Khác ---
     ├── arch_flow.svg          Sơ đồ kiến trúc
     ├── README.md              File này
-    └── .gitignore             Loại file build + dataset lớn khỏi git
+    └── .gitignore             Loại file build và dataset lớn khỏi git
 ```
 
 ---
 
-## 12. Chạy Simulation (ModelSim)
+## 12. Chạy simulation
 
-> Toolchain: **ModelSim Intel FPGA Edition 2020.1** (chỉ công cụ available trên máy).
+Toolchain dùng trong dự án là ModelSim Intel FPGA Edition 2020.1.
 
-### Bước 0: Sinh data files
+### Bước 0 — sinh dữ liệu
 
 ```bash
-python golden_compress.py      # sinh tb_expected_*_mixed.hex + báo cáo ratio
+python golden_compress.py      # sinh tb_expected_*_mixed.hex và in tỉ số nén
 python gen_demo.py             # sinh demo_src.hex, demo_expected_dest.hex
 python asm_riscv.py            # sinh demo_pipeline.hex
 ```
 
-### Bước 1: Chạy unit test từng module nén
+### Bước 1 — unit test từng module nén
 
 ```bash
-# ModelSim command
 vlog comp_zero.v scratchpad.v tb_comp_zero.v
 vsim -c tb_comp_zero -do "run -all; quit -f"
 
@@ -959,14 +965,14 @@ vlog comp_delta.v scratchpad.v tb_comp_delta.v
 vsim -c tb_comp_delta -do "run -all; quit -f"
 ```
 
-### Bước 2: Chạy unit test pattern detector
+### Bước 2 — unit test detector
 
 ```bash
 vlog pattern_detect.v tb_pattern_detect.v
 vsim -c tb_pattern_detect -do "run -all; quit -f"
 ```
 
-### Bước 3: Chạy integration test (toàn bộ CPU)
+### Bước 3 — integration test toàn CPU
 
 ```bash
 vlog if_stage.v id_stage.v ex_stage.v mem_stage.v wb_hazard_fwd.v \
@@ -977,6 +983,7 @@ vsim -c tb_demo_pipeline -do "run -all; quit -f"
 ```
 
 Kết quả mong đợi:
+
 ```
 [MODE OK]   block 0 -> mode 0  (ZERO)
 [MODE OK]   block 1 -> mode 1  (RLE)
@@ -984,72 +991,70 @@ Kết quả mong đợi:
 [PASS] Vong HW/SW detect->chon->nen chay dung tren core (3 block, 3 mode).
 ```
 
-### Bước 4: Verification chặt (GĐ4)
+### Bước 4 — verification chặt
 
-**4.1 — Golden-match qua dispatcher:**
+So khớp golden qua dispatcher:
+
 ```bash
 vlog comp_zero.v comp_rle.v comp_delta.v pattern_detect.v Compress_accel.v tb_compress_top.v
 vsim -c tb_compress_top -do "run -all; quit -f"
-# → [PASS] RTL nén (qua CCOMPR dispatcher) == golden cả 3 mode, 256 block.
 ```
 
-**4.2 — Round-trip lossless:**
+Kiểm tra round-trip không mất dữ liệu:
+
 ```bash
-python golden_compress.py --roundtrip    # decompress(compress(x)) == x cho 256 block
-# → [PASS] Round-trip lossless 100% (3 mode + adaptive)
+python golden_compress.py --roundtrip
 ```
 
-### Bước 5: Evaluation (GĐ6)
+### Bước 5 — evaluation
 
 ```bash
-python gen_datasets.py        # sinh 3 dataset tương phản (zero_heavy/repetitive/slow_varying)
-python eval_paper.py          # bảng sweep compression-ratio + eval_paper_sweep.csv
+python gen_datasets.py        # sinh 3 dataset tương phản
+python eval_paper.py          # bảng sweep tỉ số nén, ghi ra eval_paper_sweep.csv
 
-# Throughput đo từ RTL:
 vlog comp_zero.v comp_rle.v comp_delta.v pattern_detect.v Compress_accel.v tb_throughput.v
 vsim -c tb_throughput -do "run -all; quit -f"
 ```
 
+Muốn chạy một lượt thay vì gõ từng lệnh, dùng `run_modelsim.do` cho toàn bộ regression hoặc `run_modelsim_unit.do` nếu chỉ cần unit test.
+
 ---
 
-## 13. Dữ liệu lớn — cách tái tạo
+## 13. Dữ liệu lớn và cách tái tạo
 
-Repo **không chứa** dataset thô và các file hex đầy đủ vì vượt giới hạn của GitHub (100 MB/file, khuyến nghị < 50 MB). Chúng được sinh lại bằng script trong repo.
+Repo không chứa dataset thô và các file hex đầy đủ vì chúng vượt giới hạn của GitHub (100 MB mỗi file, và thực tế nên giữ dưới 50 MB). Tất cả đều sinh lại được bằng script có sẵn.
 
-### 13.1 — `data.txt` (144 MB) — dataset cảm biến thật
+### Lấy `data.txt`
 
-Nguồn: **Intel Berkeley Research Lab Sensor Data** (2004) — 2.3 triệu bản ghi từ 54 cảm biến (nhiệt độ, độ ẩm, ánh sáng, điện áp), đo mỗi 31 giây trong ~1 tháng.
+Đây là bộ Intel Berkeley Research Lab Sensor Data thu năm 2004, gồm khoảng 2.3 triệu bản ghi từ 54 cảm biến đo nhiệt độ, độ ẩm, ánh sáng và điện áp, mỗi 31 giây trong khoảng một tháng. Tải `data.txt.gz` tại <http://db.csail.mit.edu/labdata/labdata.html>, giải nén rồi đặt `data.txt` vào thư mục gốc của repo.
 
-Trang chủ: <http://db.csail.mit.edu/labdata/labdata.html> → tải `data.txt.gz`, giải nén thành `data.txt` và đặt vào thư mục gốc repo.
-
-Định dạng mỗi dòng (space-separated):
+Mỗi dòng có tám trường cách nhau bằng dấu cách:
 
 ```
 date time epoch moteid temperature humidity light voltage
 2004-02-28 00:59:16.02785 3 1 19.9884 37.0933 45.08 2.69964
 ```
 
-### 13.2 — Sinh lại các file hex
+### Sinh lại file hex từ dataset thật
 
 ```bash
-# Bản nhỏ (đã có sẵn trong repo — chỉ chạy nếu muốn sinh lại)
-python gen_real_datasets.py        # → real_temp.hex, real_volt.hex, real_light.hex, real_mixed.hex
+# Bản nhỏ đã có sẵn trong repo, chỉ chạy nếu muốn sinh lại
+python gen_real_datasets.py        # real_temp.hex, real_volt.hex, real_light.hex, real_mixed.hex
 
-# Bản đầy đủ (KHÔNG có trong repo — cần data.txt ở trên)
-python gen_real_datasets_full.py   # → real_temp_full.hex, real_volt_full.hex,
-                                   #   real_light_full.hex, real_mixed_full.hex  (~22 MB)
+# Bản đầy đủ, cần data.txt ở trên
+python gen_real_datasets_full.py   # real_*_full.hex, tổng khoảng 22 MB
 ```
 
-| File | Kích thước | Trong repo? | Sinh bằng |
-|------|-----------|-------------|-----------|
-| `data.txt` | 144 MB | Không | Tải từ MIT CSAIL (13.1) |
-| `real_*.hex` | 80 KB × 4 | **Có** | `gen_real_datasets.py` |
-| `real_temp/volt/light_full.hex` | 3.6 MB × 3 | Không | `gen_real_datasets_full.py` |
-| `real_mixed_full.hex` | 11 MB | Không | `gen_real_datasets_full.py` |
+| File | Kích thước | Trong repo | Sinh bằng |
+|------|-----------|------------|-----------|
+| `data.txt` | 144 MB | không | tải từ MIT CSAIL |
+| `real_*.hex` | 80 KB × 4 | có | `gen_real_datasets.py` |
+| `real_temp/volt/light_full.hex` | 3.6 MB × 3 | không | `gen_real_datasets_full.py` |
+| `real_mixed_full.hex` | 11 MB | không | `gen_real_datasets_full.py` |
 
-> Toàn bộ kết quả trong paper có thể tái lập chỉ với `real_*.hex` (bản nhỏ). Bản `_full` chỉ dùng để kiểm chứng rằng tỉ số nén ổn định trên dataset đầy đủ.
+Mọi kết quả trong paper tái lập được chỉ với các file `real_*.hex` bản nhỏ. Bản `_full` chỉ dùng để kiểm chứng rằng tỉ số nén không đổi khi chạy trên dataset đầy đủ.
 
-### 13.3 — Sinh lại các file hex tổng hợp / program image
+### Sinh lại dataset tổng hợp và program image
 
 ```bash
 python golden_compress.py    # tb_expected_*_mixed.hex
@@ -1061,138 +1066,20 @@ python asm_lec_baseline.py   # lec_baseline.hex
 python asm_uart_demo.py      # uart_demo.hex
 ```
 
----
+### File build bị `.gitignore` loại bỏ
 
-## 14. Các file KHÔNG nằm trong repo
-
-### 14.1 — Báo cáo & paper → `../BaoCao/`
-
-Đã tách ra thư mục `Final_Project/32bit_RISCV/BaoCao/` (ngoài repo):
-
-| File / thư mục | Nội dung |
-|----------------|----------|
-| `paper_pacomp_v2.pdf` / `.tex` | Bản paper chính |
-| `nwest.tex` | Bản nộp hội nghị |
-| `BAO_CAO_V2_THAY_DOI_VA_KIEM_CHUNG.md` | Báo cáo thay đổi + kiểm chứng V2 |
-| `BAO_CAO_SUA_LOI_VA_CAI_TIEN.txt` | Nhật ký sửa lỗi và cải tiến |
-| `HUONG_DAN_KIEM_TRA.md` | Hướng dẫn kiểm tra/nghiệm thu |
-| `eval_paper_results.md` | Bảng kết quả dạng markdown |
-| `phase5_reports/` | Vivado report **sau** tối ưu detector (+ `fpga_top.bit`) |
-| `phase5_reports_naive/` | Vivado report **trước** tối ưu (để so before/after) |
-| `phase5_reports_paper/` | Report của cấu hình dùng trong paper |
-| `phase5_reports_uart/` | Report bản có UART (+ `fpga_top_uart.bit`) |
-
-> Nếu muốn công bố kèm repo, tạo GitHub **Release** rồi đính `paper_pacomp_v2.pdf` và các file `.bit` vào đó — không commit trực tiếp.
-
-### 14.2 — File build (bị `.gitignore` loại, vẫn nằm trên máy)
-
-| Nhóm | File / thư mục | Sinh lại bằng |
-|------|----------------|---------------|
-| Vivado project | `RISC_V/`, `project_1/`, `.Xil/` | `vivado -mode batch -source synth_phase5.tcl` |
-| Vivado log | `vivado.log`, `vivado.jou`, `clockInfo.txt` | tự sinh khi chạy Vivado |
-| ModelSim | `work/`, `transcript`, `modelsim.ini`, `RISC-V_32bit.mpf` | `vlog` / `vsim` (xem mục 12) |
-| Python | `__pycache__/` | tự sinh |
-
-Có thể xóa an toàn bất cứ lúc nào — mọi thứ trong bảng này đều tái tạo được từ source trong repo.
-
----
-
-## 15. Đưa dự án lên GitHub
-
-### 15.1 — Chuẩn bị (một lần duy nhất)
-
-Cài **Git for Windows**: <https://git-scm.com/download/win> — cài xong mở **Git Bash** hoặc PowerShell.
-
-```bash
-git config --global user.name  "Tên của bạn"
-git config --global user.email "email@github.com"   # dùng đúng email đăng ký GitHub
-```
-
-### 15.2 — Tạo repo rỗng trên GitHub
-
-Vào <https://github.com/new>:
-
-- **Repository name**: `riscv32-compression-accelerator` (hoặc tên bạn muốn)
-- **Visibility**: Public hoặc Private
-- **KHÔNG** tích "Add a README file", "Add .gitignore", "Choose a license" — repo phải rỗng hoàn toàn, vì bạn đã có sẵn ở local.
-
-Bấm **Create repository** → copy URL dạng `https://github.com/<username>/<repo>.git`.
-
-### 15.3 — Khởi tạo và push
-
-Mở terminal **tại thư mục** `C:\Users\tin20\Desktop\Final_Project\32bit_RISCV\32bit_RISCV`:
-
-```bash
-cd "C:\Users\tin20\Desktop\Final_Project\32bit_RISCV\32bit_RISCV"
-
-git init
-git add .
-git status              # KIỂM TRA: phải ~95 file, KHÔNG có data.txt / RISC_V/ / work/
-git commit -m "RISC-V 32-bit pipeline + pattern-aware compression accelerator"
-
-git branch -M main
-git remote add origin https://github.com/<username>/<repo>.git
-git push -u origin main
-```
-
-Lần push đầu tiên Git sẽ hỏi đăng nhập → chọn **Sign in with your browser**, đăng nhập GitHub, xong.
-
-> **Nếu bị hỏi username/password:** GitHub không còn nhận mật khẩu tài khoản. Vào <https://github.com/settings/tokens> → *Generate new token (classic)* → tích quyền `repo` → copy token và **dán token đó vào ô password**.
-
-### 15.4 — Kiểm tra trước khi push (khuyến nghị)
-
-```bash
-# Xem tổng dung lượng sắp commit — phải < 1 MB
-git count-objects -vH
-
-# Liệt kê 10 file lớn nhất sắp commit
-git ls-files -z | xargs -0 ls -lS 2>/dev/null | head -10
-
-# Xem file nào đang bị .gitignore loại (để chắc chắn không loại nhầm source)
-git status --ignored --short | grep "^!!"
-```
-
-Nếu thấy `data.txt` hoặc `RISC_V/` trong danh sách sắp commit → `.gitignore` chưa được áp dụng, chạy:
-
-```bash
-git rm -r --cached .
-git add .
-git status
-```
-
-### 15.5 — Cập nhật sau này
-
-```bash
-git add .
-git commit -m "Mô tả ngắn gọn thay đổi"
-git push
-```
-
-### 15.6 — Đính kèm paper và bitstream (GitHub Release)
-
-Vì `.pdf` và `.bit` không nằm trong repo, cách chuẩn để chia sẻ là Release:
-
-1. Vào repo trên GitHub → tab **Releases** → **Create a new release**
-2. **Tag**: `v1.0` — **Title**: `Paper + FPGA bitstream`
-3. Kéo thả `BaoCao/paper_pacomp_v2.pdf`, `BaoCao/phase5_reports/fpga_top.bit`, `BaoCao/phase5_reports_uart/fpga_top_uart.bit` vào ô attach
-4. **Publish release**
-
-### 15.7 — Xử lý sự cố thường gặp
-
-| Lỗi | Nguyên nhân | Cách xử lý |
-|-----|-------------|-----------|
-| `remote: error: File data.txt is 144.00 MB; this exceeds GitHub's file size limit of 100.00 MB` | Đã lỡ commit file lớn | `git rm --cached data.txt` → sửa `.gitignore` → `git commit --amend -C HEAD` → push lại. Nếu file đã nằm ở commit cũ, phải dùng `git filter-repo` hoặc tạo lại repo. |
-| `fatal: remote origin already exists` | Đã add remote trước đó | `git remote set-url origin <URL mới>` |
-| `Updates were rejected because the remote contains work that you do not have locally` | Repo trên GitHub không rỗng | `git pull --rebase origin main` rồi push lại |
-| `error: failed to push some refs` + nhánh tên `master` | Nhánh local là `master`, GitHub mặc định `main` | `git branch -M main` rồi `git push -u origin main` |
-| Tiếng Việt hiển thị lỗi font trong `git log` | Encoding console | `git config --global i18n.logOutputEncoding utf-8` và chạy `chcp 65001` trong CMD |
+Các thư mục `RISC_V/`, `project_1/`, `.Xil/`, `work/` cùng `vivado.log`, `vivado.jou`, `transcript`, `modelsim.ini` và `__pycache__/` đều là sản phẩm của công cụ, không phải source. Chúng có thể xóa bất cứ lúc nào và sinh lại bằng cách chạy Vivado hoặc ModelSim theo mục 12.
 
 ---
 
 ## Ghi chú kỹ thuật
 
-- **`buf` là reserved keyword trong ModelSim** → tất cả buffer nội bộ đặt tên `wbuf`.
-- **Pipeline không stall theo `custom_busy`** → SW poll CSTAT (đã verify là đủ). Nếu reviewer yêu cầu: thêm stall handshake trong `hazard_unit` sau.
-- **`AW=8` trong `cpu_top`** (256 word scratchpad), **`AW=13` trong testbench standalone** (8192 word — cần vì dest RLE có thể vượt 4096 word trên 256 block).
-- **Không có RISC-V GCC trên máy** → dùng `asm_riscv.py` để chứng minh chạy được trên sim. File `demo_pipeline.c` là reference cho máy có toolchain.
-- **FPGA synthesis (GĐ5)** cần Vivado (chưa cài) → dùng `fpga_top.v` + `nexys_a7.xdc` khi có Vivado.
+Một vài chi tiết dễ gây vướng khi đọc code hoặc khi tiếp tục phát triển.
+
+`buf` là từ khóa dành riêng trong ModelSim, nên mọi buffer nội bộ trong dự án đặt tên là `wbuf`. Đây là lỗi biên dịch khá khó đoán nếu gặp lần đầu.
+
+Tham số `AW` khác nhau giữa hai ngữ cảnh: trong `cpu_top` là 8, tương ứng scratchpad 256 word; trong testbench standalone là 13, tức 8192 word. Testbench cần vùng lớn hơn vì đầu ra của RLE trên 256 block có thể vượt quá 4096 word.
+
+Pipeline không stall theo `custom_busy`, phần mềm tự poll CSTAT. Cách này đã verify là đủ đúng, nhưng nếu cần một handshake thật thì chỗ phải sửa là `hazard_unit`.
+
+Máy phát triển không có RISC-V GCC nên `asm_riscv.py` đảm nhiệm việc dịch assembly. File `demo_pipeline.c` giữ lại làm bản tham chiếu cho ai có sẵn toolchain đầy đủ.
