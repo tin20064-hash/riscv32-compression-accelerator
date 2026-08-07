@@ -1,0 +1,11 @@
+dataset,best_fixed,threshold8,exact_cost
+zero_heavy,4.6335,4.6335,4.6335
+repetitive,2.3063,2.3063,2.3063
+slow_vary,2.6667,2.6667,2.6667
+random,0.9412,1.0000,1.0000
+synth_mixed,1.1683,1.9636,1.9636
+real_temp,2.2756,1.8884,2.3076
+real_light,2.2279,2.4038,3.1520
+real_volt,2.6667,1.6309,2.7892
+real_mixed,2.1951,1.8669,2.5315
+ALL,1.8537,1.9246,2.4561

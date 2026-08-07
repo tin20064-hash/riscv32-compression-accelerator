@@ -1,0 +1,44 @@
++====================+===================+==========================================+
+| Launch Setup Clock | Launch Hold Clock | Pin                                      |
++====================+===================+==========================================+
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_out_reg[26]/D       |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_out_reg[28]/D       |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_out_reg[10]/D       |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_out_reg[12]/D       |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_out_reg[24]/D       |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/custom_en_out_reg/D    |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_plus4_out_reg[3]/D  |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/imm_out_reg[3]/D       |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/alu_ctrl_out_reg[0]/D  |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/branch_out_reg/D       |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/alu_ctrl_out_reg[3]/D  |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_plus4_out_reg[11]/D |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/jalr_sel_out_reg/D     |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_out_reg[5]/D        |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_plus4_out_reg[31]/D |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_plus4_out_reg[29]/D |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/alu_ctrl_out_reg[1]/D  |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_plus4_out_reg[10]/D |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_out_reg[1]/D        |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_plus4_out_reg[7]/D  |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/rs2_addr_out_reg[1]/D  |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/rs1_addr_out_reg[2]/D  |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_out_reg[14]/D       |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/imm_out_reg[0]/D       |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/imm_out_reg[2]/D       |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/mem_to_reg_out_reg/D   |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/reg_write_out_reg/D    |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_out_reg[18]/D       |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/imm_out_reg[14]/D      |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_out_reg[27]/D       |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_plus4_out_reg[9]/D  |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_plus4_out_reg[16]/D |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/imm_out_reg[12]/D      |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/pc_plus4_out_reg[17]/D |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/imm_out_reg[13]/D      |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_id_ex_reg/imm_out_reg[1]/D       |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_if_id_reg/pc_out_reg[1]/D        |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_if_id_reg/pc_out_reg[28]/D       |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_if_id_reg/pc_out_reg[0]/D        |
+| sys_clk_pin        | sys_clk_pin       | u_cpu/u_if_id_reg/pc_out_reg[11]/D       |
++--------------------+-------------------+------------------------------------------+
