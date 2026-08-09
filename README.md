@@ -146,7 +146,7 @@ assign ex_writeback_result = custom_en_ex ? custom_result_ex : alu_result_ex;
 
 ### MEM — `mem_stage.v`
 
-Bộ nhớ dữ liệu `data_mem[0:255]` chứa 256 word. Dự án thêm vào đây một bước decode địa chỉ: nếu `address[12]` bằng 1 thì truy cập rơi vào scratchpad của accelerator, bằng 0 thì vào data memory như bình thường.
+Bộ nhớ dữ liệu `data_mem[0:255]` chứa 256 word. Dự án thêm vào đây một bước decode địa chỉ cho lệnh **ghi** (SW/SB/SH): nếu `address[12]` bằng 1 thì `sw` đi ra `spad_we/waddr/wdata` để ghi đúng vào scratchpad của accelerator, bằng 0 thì ghi vào `data_mem` như bình thường. Lưu ý: decode này **chỉ áp dụng cho ghi**, không áp dụng cho đọc — xem giới hạn ở mục 6.4 và "Ghi chú kỹ thuật".
 
 Store sub-word (SB, SH) dùng mask `byte_en` cộng với `aligned_wdata` — dữ liệu được nhân bản ra cả 4 byte lane rồi mask mới chọn lane nào thực sự ghi. Chiều ngược lại, load sub-word cần mở rộng dấu: LB mở rộng dấu từ 8 lên 32 bit, còn LBU thì độn 0.
 
@@ -278,7 +278,9 @@ module scratchpad #(AW=8, DW=32)(
 );
 ```
 
-CPU dùng port 0 để nạp dữ liệu nguồn vào, accelerator dùng port 1 để ghi kết quả ra. Cổng đọc là bất đồng bộ, tức accelerator đặt địa chỉ ra và có dữ liệu ngay trong cùng cycle — chi tiết này ảnh hưởng trực tiếp tới latency của cả ba module nén.
+CPU dùng port 0 để nạp dữ liệu nguồn vào, accelerator dùng port 1 để ghi kết quả ra. Cổng đọc (`raddr`/`rdata`) là bất đồng bộ, tức accelerator đặt địa chỉ ra và có dữ liệu ngay trong cùng cycle — chi tiết này ảnh hưởng trực tiếp tới latency của cả ba module nén.
+
+**Giới hạn hiện tại — chỉ accelerator đọc được scratchpad, CPU thì không:** cổng đọc `raddr`/`rdata` của `scratchpad.v` chỉ được nối cho `compress_accel` dùng nội bộ (xem `cpu_top.v`, module `u_accel`). CPU **không có đường đọc nào vào scratchpad thật** — nếu phần mềm thử `lw` từ vùng địa chỉ `address[12]=1`, `mem_stage.v` vẫn đọc từ `data_mem` cục bộ của chính nó (không phải scratchpad thật), và vì `data_mem` không bao giờ được ghi ở các địa chỉ đó (write chỉ vào `data_mem` khi `address[12]=0`) nên `lw` luôn trả về 0. Đây không phải bug mới phát sinh mà là giới hạn có từ đầu, chỉ vô hình vì trước giờ chưa ai cần CPU đọc lại dữ liệu accelerator đã ghi. Bài báo (`RV_PC_final.tex`, mục Conclusion) cũng tự liệt kê **"a scratchpad load path"** là hạng mục để dành cho tương lai. Muốn làm thật, cần thêm 1 cổng đọc thứ 2 vào `scratchpad.v` dành riêng cho CPU, không dùng chung với cổng đọc của accelerator.
 
 Việc phân biệt hai vùng nhớ nằm ở `mem_stage.v`:
 
@@ -1124,3 +1126,5 @@ Tham số `AW` khác nhau giữa hai ngữ cảnh: trong `cpu_top` là 8, tươn
 Pipeline không stall theo `custom_busy`, phần mềm tự poll CSTAT. Cách này đã verify là đủ đúng, nhưng nếu cần một handshake thật thì chỗ phải sửa là `hazard_unit`.
 
 Máy phát triển không có RISC-V GCC nên `asm_riscv.py` đảm nhiệm việc dịch assembly. File `demo_pipeline.c` giữ lại làm bản tham chiếu cho ai có sẵn toolchain đầy đủ.
+
+CPU không đọc được từ scratchpad qua `lw` (chỉ `sw`/accelerator mới đi đúng đường) — xem chi tiết ở mục 6.4. `asm_uart_demo.py`/`tb_fpga_top_uart.v` vì vậy chỉ gửi/kiểm tra `(mode, out_len)` qua UART, đúng khớp phạm vi đã verify trong bài báo, không gửi payload nén thật. Từng có một bản thử nghiệm cho CPU `lw` lại payload từ scratchpad để gửi qua UART; bản đó bị bỏ vì rơi đúng vào giới hạn trên (payload đọc ra luôn là 0) — nếu sau này cần làm thật (đúng mục "future work" của bài báo), phải thêm cổng đọc thứ 2 vào `scratchpad.v` trước.
