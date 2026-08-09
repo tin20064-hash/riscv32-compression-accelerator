@@ -947,7 +947,13 @@ Repo chỉ chứa source, script và dataset cỡ nhỏ, tổng cộng khoảng 
 
 ## 12. Chạy simulation
 
-Toolchain dùng trong dự án là ModelSim Intel FPGA Edition 2020.1. Các lệnh `vlog`/`vsim` dưới đây gõ thẳng trong cửa sổ Transcript của ModelSim (hoặc `vsim -c ... -do "run -all; quit -f"` từ shell).
+Toolchain dùng trong dự án là ModelSim Intel FPGA Edition 2020.1.
+
+**Phân biệt 2 nơi gõ lệnh (hay nhầm):**
+- `make ...`, `python ...`, `riscv32-unknown-elf-gcc ...` — gõ trong **terminal thường** (Git Bash/cmd/PowerShell), *không* mở ModelSim. Đây là bước sinh file `.hex`/dataset, làm xong trước khi mở ModelSim.
+- `vlog ...`, `vsim ...`, `do ...` — 2 cách:
+  - Nếu đã **mở ModelSim GUI** sẵn: gõ *không* có chữ `vsim` ở đầu, ngay trong ô **Transcript** — ví dụ `do run_modelsim_all.do` (không phải `vsim -do run_modelsim_all.do`, vì `vsim` chính là chương trình đang chạy rồi).
+  - Nếu gõ thẳng từ **terminal thường** (chưa mở GUI): phải có tiền tố `vsim -c -do ...` — ModelSim sẽ tự chạy ở chế độ dòng lệnh (không hiện cửa sổ), in thẳng kết quả ra ngay terminal đó chứ không phải ra Transcript của GUI.
 
 ### Bước 0 — sinh dữ liệu
 
@@ -983,7 +989,11 @@ Muốn xem chương trình build ra bao nhiêu byte lệnh (giới hạn 1KB) ho
 >       demo_pipeline.elf demo_pipeline.hex
 >   ```
 >   (đổi `riscv32-unknown-elf-` thành đúng tiền tố toolchain trên máy bạn ở cả 2 dòng lệnh). Đây chính xác là 2 lệnh `make` gọi ngầm — chỉ khác là bạn gõ tay thay vì để `make` gõ giúp.
-> - **Cài `make` để dùng `Makefile` cho tiện về sau** — 1 trong các cách: `choco install make` (nếu có Chocolatey), `scoop install make` (nếu có Scoop), hoặc nếu bạn cài MSYS2 riêng (không phải chỉ Git Bash) thì `pacman -S make`.
+> - **Cài `make` để dùng `Makefile` cho tiện về sau** — chọn 1 trong các cách sau (không cần làm hết, máy hầu hết sinh viên chỉ có Git Bash trơn nên **không có sẵn** `choco`/`scoop`/`pacman` — nếu vậy dùng cách GnuWin32 bên dưới, không cần cài package manager trước):
+>   - **GnuWin32 (không cần cài package manager trước, khuyên dùng nếu máy chỉ có Git Bash trơn):** tải `make` tại http://gnuwin32.sourceforge.net/packages/make.htm (mục "Binaries" -> file `.zip` hoặc `.exe` cài đặt), cài/giải nén xong sẽ có file `make.exe` (thường nằm trong `...\GnuWin32\bin`). Thêm đường dẫn thư mục `bin` đó vào biến môi trường `PATH` của Windows (Settings -> System -> About -> Advanced system settings -> Environment Variables -> sửa biến `Path`, thêm dòng mới trỏ tới thư mục chứa `make.exe`), rồi **mở lại** cửa sổ Git Bash (bắt buộc, để nó đọc `PATH` mới) và gõ `make --version` để kiểm tra đã nhận lệnh chưa.
+>   - `choco install make` — nếu máy đã cài sẵn Chocolatey.
+>   - `scoop install make` — nếu máy đã cài sẵn Scoop.
+>   - `pacman -S make` — nếu bạn cài MSYS2 đầy đủ riêng (không phải chỉ Git Bash đi kèm Git for Windows).
 
 **Cách B — assembler Python (không cần cài GCC):**
 
