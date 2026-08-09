@@ -1,27 +1,29 @@
 #!/usr/bin/env python3
 # ===================================================================
-# asm_uart_demo.py -- FULL-PAYLOAD UART demo (v2)
+# asm_uart_demo.py -- UART demo: streams (mode, out_len) per block
 # -------------------------------------------------------------------
-# Extends the original mode+out_len-only readout (which only proved
-# selection and length matched the reference model) to stream the
-# ACTUAL COMPRESSED BYTES of each block, closing the last gap in the
-# silicon-verification chain (paper Section VII, "Validation on
-# programmed silicon"): a bit-exact comparison against
-# tb_expected_*_mixed.hex / the reference model is now possible from
-# board read-back alone.
+# LUU Y (sua ngay 09/08/2026): ban truoc day cua file nay co them 1
+# vong lap "payload_words" dung `lw` doc lai tu scratchpad de gui ca
+# du lieu nen thuc su qua UART. Da BO doan do vi 2 ly do:
 #
-# Per block the board now sends, in order:
-#   byte 0       : mode  (0=ZERO,1=RLE,2=DELTA,3=RAW)
-#   byte 1       : out_len (words)
-#   byte 2..     : out_len*4 payload bytes, one 32-bit compressed word
-#                  at a time, LSB first (byte0,byte1,byte2,byte3 of
-#                  word0, then word1, ...). For RAW blocks the payload
-#                  is the 16 original words (no header), matching the
-#                  format described in the paper.
+#   1. Bai bao (RV_PC_final.tex) chi claim/verify (mode, out_len) qua
+#      UART (Sec. Verification Results: "every (mode, out_len) pair
+#      streamed over UART matched the golden-model prediction exactly"),
+#      KHONG claim gui/doi chieu payload qua UART.
+#   2. Bai bao tu liet ke "a scratchpad load path" la FUTURE WORK
+#      (Sec. Conclusion) -- tuc CPU doc lai (`lw`) tu scratchpad la
+#      duong chua duoc xay/chua duoc verify. Thuc te dung thu: mem_stage.v
+#      chi co RAM noi bo rieng cho load/store thuong, khong co duong noi
+#      nao cho CPU `lw` doc dung tu scratchpad that (spad_raddr/spad_rdata
+#      chi noi cho accelerator dung noi bo) -- nen `lw` tra ve toan 0.
+#      Ket qua: payload gui qua UART sai hoan toan (chi mode/out_len la
+#      dung, vi 2 gia tri do lay tu thanh ghi/cstat, khong qua `lw`).
 #
-# No RTL changes were needed: fpga_top_uart.v's mailbox already sends
-# whatever byte the CPU stores to scratchpad word 255. This file only
-# adds the payload-streaming loop after the existing mode/out_len send.
+# Quay lai dung dung pham vi bai bao da verify: moi block chi gui 2
+# byte (mode, out_len), khop voi tb_fpga_top_uart.v da commit tu dau.
+# Neu sau nay muon lam duong doc scratchpad that su cho CPU (future
+# work), can them 1 cong doc thu 2 vao scratchpad.v roi moi bat lai
+# tinh nang gui payload.
 # ===================================================================
 import os
 from asm_riscv import assemble
@@ -54,11 +56,9 @@ wait2:
     andi  x17, x17, 1
     beq   x17, x0, wait2
     andi  x19, x16, 0x7FF      # out_len (words)
-    add   x24, x9, x0          # payload word pointer = dst
     jal   x0, send_result
 raw_case:
     addi  x19, x0, 16          # RAW: no compression, out_len = N = 16
-    add   x24, x10, x0         # payload word pointer = src (RAW carries no header)
 send_result:
     sw    x14, 0(x21)          # send the MODE byte over UART
     nop                        # IMPORTANT: create a mem_write=0 gap between
@@ -70,39 +70,6 @@ send_result:
     nop
     nop
     nop
-    # ---- stream out_len 32-bit words, 4 bytes each (LSB first) ----
-    addi  x25, x0, 0           # word index j = 0
-payload_words:
-    beq   x25, x19, payload_done
-    slli  x26, x25, 2
-    add   x26, x26, x24        # addr of word j
-    lw    x27, 0(x26)          # x27 = compressed word j
-    sw    x27, 0(x21)          # byte0 (LSB)
-    nop
-    nop
-    nop
-    nop
-    srli  x27, x27, 8
-    sw    x27, 0(x21)          # byte1
-    nop
-    nop
-    nop
-    nop
-    srli  x27, x27, 8
-    sw    x27, 0(x21)          # byte2
-    nop
-    nop
-    nop
-    nop
-    srli  x27, x27, 8
-    sw    x27, 0(x21)          # byte3 (MSB)
-    nop
-    nop
-    nop
-    nop
-    addi  x25, x25, 1
-    jal   x0, payload_words
-payload_done:
     addi  x6, x6, 1
     bne   x6, x18, loop
 halt:
