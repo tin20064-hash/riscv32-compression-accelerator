@@ -11,6 +11,10 @@ module tb_demo_sparse;
     localparam NUM_BLK  = 3;
     localparam DST_WORD = NUM_BLK * N;
     localparam DIV      = 20;               // clk_en high 1/20 cycles
+    // Dia chi word cua mode_log[0]/len_log[0] -- do linker (GCC build) quyet
+    // dinh, xem ghi chu chi tiet dau file tb_demo_pipeline.v.
+    localparam LEN_BASE  = 0;
+    localparam MODE_BASE = 3;
 
     reg clk = 0, rst_n = 0;
     reg clk_en = 0;
@@ -54,13 +58,13 @@ module tb_demo_sparse;
         errors = 0;
         $display("\n  == tb_demo_sparse (clk_en 1/%0d) sau %0d xung clk_en ==", DIV, enpulses);
         for (i = 0; i < NUM_BLK; i = i + 1) begin
-            if (dut.u_mem_stage.data_mem[i] !== exp_mode[i]) begin
+            if (dut.u_mem_stage.data_mem[MODE_BASE+i] !== exp_mode[i]) begin
                 errors = errors + 1;
                 $display("  [MODE FAIL] block %0d: got=%0d exp=%0d",
-                         i, dut.u_mem_stage.data_mem[i], exp_mode[i]);
+                         i, dut.u_mem_stage.data_mem[MODE_BASE+i], exp_mode[i]);
             end else
                 $display("  [MODE OK]   block %0d -> mode %0d (len %0d)",
-                         i, dut.u_mem_stage.data_mem[i], dut.u_mem_stage.data_mem[16+i]);
+                         i, dut.u_mem_stage.data_mem[MODE_BASE+i], dut.u_mem_stage.data_mem[LEN_BASE+i]);
         end
         $display("");
         if (errors == 0)
@@ -74,10 +78,11 @@ module tb_demo_sparse;
     initial begin
         #2000000;
         $display("\n  [TIMEOUT] -> HUNG with sparse clk_en (as suspected).");
-        $display("  data_mem[0..2] = %0d %0d %0d",
-                 dut.u_mem_stage.data_mem[0],
-                 dut.u_mem_stage.data_mem[1],
-                 dut.u_mem_stage.data_mem[2]);
+        $display("  data_mem[%0d..%0d] = %0d %0d %0d",
+                 MODE_BASE, MODE_BASE+2,
+                 dut.u_mem_stage.data_mem[MODE_BASE],
+                 dut.u_mem_stage.data_mem[MODE_BASE+1],
+                 dut.u_mem_stage.data_mem[MODE_BASE+2]);
         $finish;
     end
 endmodule
