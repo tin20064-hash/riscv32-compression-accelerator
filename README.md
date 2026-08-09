@@ -966,14 +966,23 @@ python gen_demo.py             # sinh demo_src.hex, demo_expected_dest.hex
 
 **Cách A — RISC-V GCC thật (nhánh `feature/gcc-toolchain`):**
 
+Chưa có sẵn bộ dịch RISC-V trên máy? Khuyên dùng **xPack RISC-V Embedded GCC** — bản dựng sẵn cho Windows, không cần cài Chocolatey/Scoop/MSYS2 trước:
+
+1. Tải `xpack-riscv-none-elf-gcc-<phiên bản mới nhất>-win32-x64.zip` tại https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases (mục **Assets** của bản release mới nhất).
+2. Giải nén vào `%USERPROFILE%\AppData\Roaming\xPacks\riscv-none-elf-gcc\` — sau khi giải nén sẽ có đường dẫn dạng `...\xPacks\riscv-none-elf-gcc\xpack-riscv-none-elf-gcc-<version>\bin`.
+3. Thêm thư mục `bin` đó vào biến môi trường `PATH` (giống bước cài `make`).
+4. Đóng mở lại Git Bash, gõ `riscv-none-elf-gcc --version` để kiểm tra.
+
+Bộ này đặt tên lệnh là `riscv-none-elf-gcc` (không phải `riscv32-unknown-elf-gcc`), nên chạy `make` với:
+
 ```bash
-make CROSS=riscv32-unknown-elf- clean all
+make CROSS=riscv-none-elf- clean all
 ```
 
-Trong đó `CROSS` là tiền tố tên bộ 3 công cụ GCC/binutils cài trên máy bạn (ví dụ nếu lệnh `gcc` của bạn tên `riscv32-unknown-elf-gcc` thì gõ đúng như trên; nếu tên khác — ví dụ `riscv64-unknown-elf-gcc` — thì đổi `CROSS=riscv64-unknown-elf-`). Makefile sẽ tự chạy 2 bước:
+`CROSS` là tiền tố tên bộ 3 công cụ GCC/binutils — nếu bạn dùng bộ toolchain khác (ví dụ cài qua MSYS2/pacman, hoặc bản SiFive `riscv64-unknown-elf-gcc`) thì đổi `CROSS` cho khớp tên lệnh `gcc` thật sự có trên máy bạn (gõ `<CROSS>gcc --version` để kiểm tra trước khi chạy `make`). Makefile sẽ tự chạy 2 bước:
 
-1. `riscv32-unknown-elf-gcc ... crt0.S demo_pipeline.c -o demo_pipeline.elf` — biên dịch + liên kết theo bản đồ bộ nhớ trong `link.ld`.
-2. `riscv32-unknown-elf-objcopy -O verilog --verilog-data-width=4 --reverse-bytes=4 demo_pipeline.elf demo_pipeline.hex` — xuất ra đúng định dạng 1 word 32-bit/dòng mà `$readmemh` cần (2 cờ `--verilog-data-width=4 --reverse-bytes=4` **bắt buộc phải có** — thiếu 1 trong 2 cờ này sẽ ra file `.hex` sai hoàn toàn, xem chú thích trong `Makefile`).
+1. `riscv-none-elf-gcc ... crt0.S demo_pipeline.c -o demo_pipeline.elf` — biên dịch + liên kết theo bản đồ bộ nhớ trong `link.ld`.
+2. `riscv-none-elf-objcopy -O verilog --verilog-data-width=4 --reverse-bytes=4 demo_pipeline.elf demo_pipeline.hex` — xuất ra đúng định dạng 1 word 32-bit/dòng mà `$readmemh` cần (2 cờ `--verilog-data-width=4 --reverse-bytes=4` **bắt buộc phải có** — thiếu 1 trong 2 cờ này sẽ ra file `.hex` sai hoàn toàn, xem chú thích trong `Makefile`).
 
 Muốn xem chương trình build ra bao nhiêu byte lệnh (giới hạn 1KB) hoặc xem lại mã máy: `make size` / `make disasm`.
 
@@ -981,14 +990,14 @@ Muốn xem chương trình build ra bao nhiêu byte lệnh (giới hạn 1KB) ho
 >
 > - **Không cần cài gì thêm — gõ tay đúng 2 lệnh mà Makefile chạy bên trong:**
 >   ```bash
->   riscv32-unknown-elf-gcc -march=rv32i -mabi=ilp32 -nostdlib -ffreestanding -Os \
+>   riscv-none-elf-gcc -march=rv32i -mabi=ilp32 -nostdlib -ffreestanding -Os \
 >       -mno-relax -Wall -Wextra -ffunction-sections -fdata-sections \
 >       -T link.ld -nostdlib -Wl,--no-relax -Wl,--gc-sections \
 >       crt0.S demo_pipeline.c -o demo_pipeline.elf
->   riscv32-unknown-elf-objcopy -O verilog --verilog-data-width=4 --reverse-bytes=4 \
+>   riscv-none-elf-objcopy -O verilog --verilog-data-width=4 --reverse-bytes=4 \
 >       demo_pipeline.elf demo_pipeline.hex
 >   ```
->   (đổi `riscv32-unknown-elf-` thành đúng tiền tố toolchain trên máy bạn ở cả 2 dòng lệnh). Đây chính xác là 2 lệnh `make` gọi ngầm — chỉ khác là bạn gõ tay thay vì để `make` gõ giúp.
+>   (đổi `riscv-none-elf-` thành đúng tiền tố toolchain trên máy bạn ở cả 2 dòng lệnh, nếu không dùng xPack). Đây chính xác là 2 lệnh `make` gọi ngầm — chỉ khác là bạn gõ tay thay vì để `make` gõ giúp.
 > - **Cài `make` để dùng `Makefile` cho tiện về sau** — chọn 1 trong các cách sau (không cần làm hết, máy hầu hết sinh viên chỉ có Git Bash trơn nên **không có sẵn** `choco`/`scoop`/`pacman` — nếu vậy dùng cách GnuWin32 bên dưới, không cần cài package manager trước):
 >   - **GnuWin32 (không cần cài package manager trước, khuyên dùng nếu máy chỉ có Git Bash trơn):** tải `make` tại http://gnuwin32.sourceforge.net/packages/make.htm (mục "Binaries" -> file `.zip` hoặc `.exe` cài đặt), cài/giải nén xong sẽ có file `make.exe` (thường nằm trong `...\GnuWin32\bin`). Thêm đường dẫn thư mục `bin` đó vào biến môi trường `PATH` của Windows (Settings -> System -> About -> Advanced system settings -> Environment Variables -> sửa biến `Path`, thêm dòng mới trỏ tới thư mục chứa `make.exe`), rồi **mở lại** cửa sổ Git Bash (bắt buộc, để nó đọc `PATH` mới) và gõ `make --version` để kiểm tra đã nhận lệnh chưa.
 >   - `choco install make` — nếu máy đã cài sẵn Chocolatey.
