@@ -3,11 +3,13 @@
 module tb_if_stage;
 
 reg         clk, rst_n, stall;
+reg         clk_en = 1;
 reg  [31:0] next_pc;
 wire [31:0] pc_out, pc_plus4, instruction;
 
 if_stage dut (
     .clk         (clk),
+    .clk_en      (clk_en),
     .rst_n       (rst_n),
     .stall       (stall),
     .next_pc     (next_pc),
