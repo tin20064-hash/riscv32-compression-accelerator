@@ -3,10 +3,22 @@
 // tb_demo_pipeline.v -- Phase 3.2: run the detect->select->compress loop on the CORE
 // -------------------------------------------------------------------
 // Nap demo_pipeline.hex vao instruction memory, demo_src.hex vao scratchpad,
-// run the program (assembled by asm_riscv.py = demo_pipeline.c), then:
-//   - check data_mem[i]    == detector-selected mode  (expected [ZERO,RLE,DELTA])
-//   - check data_mem[16+i] == out_len             (expected [5,5,6])
+// run the program, then:
+//   - check data_mem[MODE_BASE+i] == detector-selected mode  (expected [ZERO,RLE,DELTA])
+//   - check data_mem[LEN_BASE+i]  == out_len                 (expected [5,5,6])
 //   - check dest scratchpad [48..] == demo_expected_dest.hex
+//
+// MODE_BASE/LEN_BASE: dia chi (word) cua 2 bien toan cuc mode_log[]/len_log[]
+// trong demo_pipeline.c. Dia chi nay do LINKER (link.ld + trinh tu bien trong
+// file .c) quyet dinh -- KHONG co dia chi co dinh nhu quy uoc code asm cu
+// (asm_riscv.py, dung word 0-2 cho mode va word 16-18 cho len). Neu build lai
+// bang GCC (make CROSS=... clean all) va sua/them bien toan cuc trong
+// demo_pipeline.c, dia chi co the doi -- luc do phai chay lai:
+//   nm demo_pipeline.elf | grep -E "mode_log|len_log"
+// roi cap nhat 2 localparam ben duoi cho khop (dia chi byte tu nm chia 4 =
+// dia chi word). Gia tri hien tai (LEN_BASE=0, MODE_BASE=3) ung voi ban
+// build GCC hien tai: len_log tai byte 0x00 (word 0), mode_log tai byte
+// 0x0c (word 3).
 //
 // Run (ModelSim):
 //   vlog <tat ca .v cpu> tb_demo_pipeline.v
@@ -17,6 +29,8 @@ module tb_demo_pipeline;
     localparam NUM_BLK  = 3;
     localparam DST_WORD = NUM_BLK * N;     // 48
     localparam EXP_DLEN = 16;              // total compressed words (5+5+6)
+    localparam LEN_BASE  = 0;              // dia chi word cua len_log[0]  (xem ghi chu tren dau file)
+    localparam MODE_BASE = 3;              // dia chi word cua mode_log[0] (xem ghi chu tren dau file)
 
     reg clk = 0, rst_n = 0, clk_en = 1;
     wire [31:0] debug_data;
@@ -52,17 +66,17 @@ module tb_demo_pipeline;
         errors = 0;
         $display("\n  == demo_pipeline result on the core ==");
         for (i = 0; i < NUM_BLK; i = i + 1) begin
-            if (dut.u_mem_stage.data_mem[i] !== exp_mode[i]) begin
+            if (dut.u_mem_stage.data_mem[MODE_BASE+i] !== exp_mode[i]) begin
                 errors = errors + 1;
                 $display("  [MODE FAIL] block %0d: got=%0d exp=%0d",
-                         i, dut.u_mem_stage.data_mem[i], exp_mode[i]);
+                         i, dut.u_mem_stage.data_mem[MODE_BASE+i], exp_mode[i]);
             end else
-                $display("  [MODE OK]   block %0d -> mode %0d", i, dut.u_mem_stage.data_mem[i]);
+                $display("  [MODE OK]   block %0d -> mode %0d", i, dut.u_mem_stage.data_mem[MODE_BASE+i]);
 
-            if (dut.u_mem_stage.data_mem[16+i] !== exp_len[i]) begin
+            if (dut.u_mem_stage.data_mem[LEN_BASE+i] !== exp_len[i]) begin
                 errors = errors + 1;
                 $display("  [LEN  FAIL] block %0d: got=%0d exp=%0d",
-                         i, dut.u_mem_stage.data_mem[16+i], exp_len[i]);
+                         i, dut.u_mem_stage.data_mem[LEN_BASE+i], exp_len[i]);
             end
         end
 
