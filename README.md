@@ -957,6 +957,8 @@ Toolchain dùng trong dự án là ModelSim Intel FPGA Edition 2020.1.
   - Nếu đã **mở ModelSim GUI** sẵn: gõ *không* có chữ `vsim` ở đầu, ngay trong ô **Transcript** — ví dụ `do run_modelsim_all.do` (không phải `vsim -do run_modelsim_all.do`, vì `vsim` chính là chương trình đang chạy rồi).
   - Nếu gõ thẳng từ **terminal thường** (chưa mở GUI): phải có tiền tố `vsim -c -do ...` — ModelSim sẽ tự chạy ở chế độ dòng lệnh (không hiện cửa sổ), in thẳng kết quả ra ngay terminal đó chứ không phải ra Transcript của GUI.
 
+> **Chạy `run_modelsim_all.do` (18 testbench liên tiếp) thì dùng cách 2 (terminal), không dùng cách 1 (GUI):** vì script chạy 18 testbench nối tiếp nhau, mỗi lần 1 cái gọi `$finish` thì nếu đang ở trong GUI, ModelSim sẽ bật hộp thoại xác nhận (phải bấm Yes/No thủ công) — làm 18 lần thì phải bấm tay 18 lần. Chạy thẳng `vsim -c -do run_modelsim_all.do` từ Git Bash (không mở GUI trước) sẽ không có cửa sổ nào để hiện hộp thoại, chạy hết 18 testbench tự động không dừng lại lần nào.
+
 ### Bước 0 — sinh dữ liệu
 
 ```bash
