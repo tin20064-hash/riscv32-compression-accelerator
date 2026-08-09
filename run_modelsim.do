@@ -19,6 +19,12 @@ vlog -work work -sv +acc \
     id_ex_reg.v \
     pipeline_regs.v \
     wb_hazard_fwd.v \
+    scratchpad.v \
+    comp_zero.v \
+    comp_rle.v \
+    comp_delta.v \
+    pattern_detect.v \
+    Compress_accel.v \
     cpu_top.v \
     tb_cpu_top.v
 

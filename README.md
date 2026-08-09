@@ -878,7 +878,7 @@ Repo chỉ chứa source, script và dataset cỡ nhỏ, tổng cộng khoảng 
 │   └── gen_real_datasets_full.py  Sinh real_*_full.hex từ data.txt (không có trong repo)
 │
 ├── --- Assembler và evaluation ---
-│   ├── asm_riscv.py           Assembler Python thay cho RISC-V GCC
+│   ├── asm_riscv.py           Assembler Python cho demo_pipeline (cách 2, không cần GCC)
 │   ├── asm_sw_baseline.py     Sinh chương trình baseline software
 │   ├── asm_lec_baseline.py    Sinh chương trình baseline LEC
 │   ├── asm_uart_demo.py       Sinh chương trình demo UART
@@ -886,12 +886,16 @@ Repo chỉ chứa source, script và dataset cỡ nhỏ, tổng cộng khoảng 
 │   ├── eval_baselines.py      So sánh với gzip, zlib, LEC
 │   ├── eval_composability.py  Đánh giá khả năng ghép nhiều mode
 │   ├── eval_lec_winner.py     Phân tích các trường hợp LEC thắng
-│   ├── verify_paper_numbers.py  Kiểm tra chéo mọi con số trong paper
 │   └── read_uart_demo.py      Đọc stream UART từ board qua cổng COM
 │
 ├── --- Lớp phần mềm ---
 │   ├── compress_api.h         Wrapper C cho 3 lệnh custom
-│   └── demo_pipeline.c        Demo end-to-end (cần RISC-V GCC để biên dịch)
+│   └── demo_pipeline.c        Demo end-to-end -- entry point la c_entry(), goi tu crt0.S
+│
+├── --- Toolchain RISC-V GCC (thêm mới, nhánh feature/gcc-toolchain) ---
+│   ├── link.ld                 Linker script: tách vùng PROGRAM/DATA khớp if_stage.v/mem_stage.v
+│   ├── crt0.S                  Khởi động: gán sp, xóa .bss, nhảy vào c_entry()
+│   └── Makefile                 `make CROSS=<prefix-> clean all` -> demo_pipeline.hex
 │
 ├── --- Script chạy tự động ---
 │   ├── run_modelsim.do        Chạy full regression trên ModelSim
@@ -942,81 +946,69 @@ Repo chỉ chứa source, script và dataset cỡ nhỏ, tổng cộng khoảng 
 
 ## 12. Chạy simulation
 
-Toolchain dùng trong dự án là ModelSim Intel FPGA Edition 2020.1.
+Toolchain dùng trong dự án là ModelSim Intel FPGA Edition 2020.1. Các lệnh `vlog`/`vsim` dưới đây gõ thẳng trong cửa sổ Transcript của ModelSim (hoặc `vsim -c ... -do "run -all; quit -f"` từ shell).
 
 ### Bước 0 — sinh dữ liệu
 
 ```bash
 python golden_compress.py      # sinh tb_expected_*_mixed.hex và in tỉ số nén
 python gen_demo.py             # sinh demo_src.hex, demo_expected_dest.hex
+```
+
+`demo_pipeline.hex` (chương trình cho testbench tích hợp) có thể sinh bằng 1 trong 2 cách:
+
+**Cách A — RISC-V GCC thật (nhánh `feature/gcc-toolchain`):**
+
+```bash
+make CROSS=riscv32-unknown-elf- clean all
+```
+
+Trong đó `CROSS` là tiền tố tên bộ 3 công cụ GCC/binutils cài trên máy bạn (ví dụ nếu lệnh `gcc` của bạn tên `riscv32-unknown-elf-gcc` thì gõ đúng như trên; nếu tên khác — ví dụ `riscv64-unknown-elf-gcc` — thì đổi `CROSS=riscv64-unknown-elf-`). Makefile sẽ tự chạy 2 bước:
+
+1. `riscv32-unknown-elf-gcc ... crt0.S demo_pipeline.c -o demo_pipeline.elf` — biên dịch + liên kết theo bản đồ bộ nhớ trong `link.ld`.
+2. `riscv32-unknown-elf-objcopy -O verilog --verilog-data-width=4 --reverse-bytes=4 demo_pipeline.elf demo_pipeline.hex` — xuất ra đúng định dạng 1 word 32-bit/dòng mà `$readmemh` cần (2 cờ `--verilog-data-width=4 --reverse-bytes=4` **bắt buộc phải có** — thiếu 1 trong 2 cờ này sẽ ra file `.hex` sai hoàn toàn, xem chú thích trong `Makefile`).
+
+Muốn xem chương trình build ra bao nhiêu byte lệnh (giới hạn 1KB) hoặc xem lại mã máy: `make size` / `make disasm`.
+
+**Cách B — assembler Python (không cần cài GCC):**
+
+```bash
 python asm_riscv.py            # sinh demo_pipeline.hex
 ```
 
-### Bước 1 — unit test từng module nén
+Cả 2 cách đều ra cùng 1 định dạng file, dùng thay thế cho nhau được — các bước chạy testbench bên dưới không đổi dù bạn chọn cách nào. Lưu ý duy nhất: nếu dùng cách A và có sửa/thêm biến toàn cục trong `demo_pipeline.c`, địa chỉ của `mode_log[]`/`len_log[]` trong bộ nhớ có thể đổi (do trình liên kết tự sắp xếp) — kiểm tra lại bằng `nm demo_pipeline.elf | grep -E "mode_log|len_log"` rồi cập nhật `MODE_BASE`/`LEN_BASE` trong `tb_demo_pipeline.v` và `tb_demo_sparse.v` cho khớp.
 
-```bash
-vlog comp_zero.v scratchpad.v tb_comp_zero.v
-vsim -c tb_comp_zero -do "run -all; quit -f"
+### Bảng toàn bộ testbench
 
-vlog comp_rle.v scratchpad.v tb_comp_rle.v
-vsim -c tb_comp_rle -do "run -all; quit -f"
+Danh sách `.v` cần `vlog` (giữ đúng thứ tự) và cách đọc kết quả PASS/FAIL cho từng testbench:
 
-vlog comp_delta.v scratchpad.v tb_comp_delta.v
-vsim -c tb_comp_delta -do "run -all; quit -f"
-```
+| Testbench | File `.v` cần vlog thêm | Lệnh `vsim` | Cách đọc kết quả |
+|---|---|---|---|
+| `tb_if_stage`, `tb_id_stage`, `tb_ex_stage`, `tb_mem_stage` | `if_stage.v id_stage.v ex_stage.v mem_stage.v if_id_reg.v id_ex_reg.v pipeline_regs.v wb_hazard_fwd.v` | `vsim -c tb_if_stage -do "run -all; quit -f"` (đổi tên cho 3 file còn lại) | Mỗi dòng in `PASS [tên_test]` hoặc `FAIL [tên_test]`. Không có dòng `FAIL` nào là qua hết. |
+| `tb_cpu_top` | như trên + `scratchpad.v comp_zero.v comp_rle.v comp_delta.v pattern_detect.v Compress_accel.v cpu_top.v` | `vsim -c tb_cpu_top -do "run -all; quit -f"` | Cuối log in `Total: N PASS, 0 FAIL` và `** ALL TESTS PASSED **`. Có số `FAIL` > 0 là có lỗi. |
+| `tb_comp_zero` / `tb_comp_rle` / `tb_comp_delta` | `comp_zero.v scratchpad.v` (đổi tên module cho rle/delta) | `vsim -c tb_comp_zero -do "run -all; quit -f"` | Dòng cuối `[PASS] ... matches golden model` hoặc `[FAIL] so loi = N`. |
+| `tb_pattern_detect` | `pattern_detect.v` | `vsim -c tb_pattern_detect -do "run -all; quit -f"` | `[PASS] pattern_detect matches golden ...` hoặc `[FAIL] so loi = N / 256 block`. |
+| `tb_compress_top` | `comp_zero.v comp_rle.v comp_delta.v pattern_detect.v Compress_accel.v scratchpad.v` | `vsim -c tb_compress_top -do "run -all; quit -f"` | `[PASS] RTL compress (via CCOMPR dispatcher) == golden for all 3 modes` hoặc `[FAIL] tong loi = N`. |
+| `tb_demo_pipeline` | `if_stage.v id_stage.v ex_stage.v mem_stage.v if_id_reg.v id_ex_reg.v pipeline_regs.v wb_hazard_fwd.v scratchpad.v comp_zero.v comp_rle.v comp_delta.v pattern_detect.v Compress_accel.v cpu_top.v` | `vsim -c tb_demo_pipeline -do "run -all; quit -f"` | `[MODE OK]` x3 + `[PASS] HW/SW detect->select->compress loop runs correctly on the core`. Bất kỳ dòng `FAIL` nào (MODE/LEN/DEST) là có lỗi. |
+| `tb_demo_sparse` | như `tb_demo_pipeline` | `vsim -c tb_demo_sparse -do "run -all; quit -f"` | `[PASS] Runs correctly with SPARSE clk_en -> NO hang.` — kiểm tra không bị treo khi `clk_en` thưa (giống điều kiện thật trên board). |
+| `tb_cyc_display` | như `tb_demo_pipeline` | `vsim -c tb_cyc_display -do "run -all; quit -f"` | Không có PASS/FAIL tự động — in `Block i: cyc_lat = N`, tự so bằng mắt với dòng `[DONE] expected: 17 (ZERO), 37 (RLE), 23 (DELTA)`. |
+| `tb_sw_baseline` | như `tb_demo_pipeline` | `vsim -c tb_sw_baseline -do "run -all; quit -f"` | `[PASS] SW output MATCHES golden (same format as HW) -> cycle counts are valid.` |
+| `tb_lec_baseline` | như `tb_demo_pipeline` (chạy `python asm_lec_baseline.py` trước để sinh `lec_baseline.hex`) | `vsim -c tb_lec_baseline -do "run -all; quit -f"` | `[PASS] SW output MATCHES the golden LEC bit-cost model -> cycle count is valid.` |
+| `tb_uart_tx` | `uart_tx.v` | `vsim -c tb_uart_tx -do "run -all; quit -f"` | `[PASS] uart_tx sent 4/4 bytes correctly` hoặc `[FAIL] N loi.` |
+| `tb_fpga_top_uart` | `uart_tx.v fpga_top_uart_fastsim.v` + toàn bộ file của `tb_demo_pipeline` (chạy `python asm_uart_demo.py` trước để sinh `uart_demo.hex`) | `vsim -c tb_fpga_top_uart -do "run -all; quit -f"` | `[PASS] UART sent correct mode+out_len for all 14 REAL data blocks` hoặc `[FAIL] N loi.` |
+| `tb_throughput` | như `tb_demo_pipeline` (không cần `cpu_top.v`) | `vsim -c tb_throughput -do "run -all; quit -f"` | Không có PASS/FAIL — in bảng cycle/throughput từng mode, đọc bằng mắt, kết thúc bằng `[DONE]`. |
 
-### Bước 2 — unit test detector
+Với mọi testbench: nếu log dừng giữa chừng và in `[TIMEOUT]` thay vì PASS/FAIL, nghĩa là mạch bị treo (không tới điểm kiểm tra) — đây luôn là lỗi, kể cả khi không có dòng `FAIL` nào.
 
-```bash
-vlog pattern_detect.v tb_pattern_detect.v
-vsim -c tb_pattern_detect -do "run -all; quit -f"
-```
+Muốn chạy một lượt thay vì gõ từng lệnh: `run_modelsim.do` (toàn bộ `tb_cpu_top` — đã vá thêm 6 module accelerator còn thiếu trong danh sách `vlog`), `run_modelsim_unit.do` (4 testbench unit stage), `run_modelsim_lec.do` (`tb_lec_baseline`).
 
-### Bước 3 — integration test toàn CPU
-
-```bash
-vlog if_stage.v id_stage.v ex_stage.v mem_stage.v wb_hazard_fwd.v \
-     pipeline_regs.v cpu_top.v scratchpad.v \
-     comp_zero.v comp_rle.v comp_delta.v pattern_detect.v Compress_accel.v \
-     tb_demo_pipeline.v
-vsim -c tb_demo_pipeline -do "run -all; quit -f"
-```
-
-Kết quả mong đợi:
-
-```
-[MODE OK]   block 0 -> mode 0  (ZERO)
-[MODE OK]   block 1 -> mode 1  (RLE)
-[MODE OK]   block 2 -> mode 2  (DELTA)
-[PASS] Vong HW/SW detect->chon->nen chay dung tren core (3 block, 3 mode).
-```
-
-### Bước 4 — verification chặt
-
-So khớp golden qua dispatcher:
-
-```bash
-vlog comp_zero.v comp_rle.v comp_delta.v pattern_detect.v Compress_accel.v tb_compress_top.v
-vsim -c tb_compress_top -do "run -all; quit -f"
-```
-
-Kiểm tra round-trip không mất dữ liệu:
+**Kiểm tra chéo bằng golden model / round-trip:**
 
 ```bash
 python golden_compress.py --roundtrip
-```
-
-### Bước 5 — evaluation
-
-```bash
 python gen_datasets.py        # sinh 3 dataset tương phản
 python eval_paper.py          # bảng sweep tỉ số nén, ghi ra eval_paper_sweep.csv
-
-vlog comp_zero.v comp_rle.v comp_delta.v pattern_detect.v Compress_accel.v tb_throughput.v
-vsim -c tb_throughput -do "run -all; quit -f"
 ```
-
-Muốn chạy một lượt thay vì gõ từng lệnh, dùng `run_modelsim.do` cho toàn bộ regression hoặc `run_modelsim_unit.do` nếu chỉ cần unit test.
 
 ---
 
