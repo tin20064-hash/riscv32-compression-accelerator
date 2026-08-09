@@ -34,16 +34,21 @@ all: $(TARGET).hex
 $(TARGET).elf: $(SRCS) link.ld
 	$(CC) $(CFLAGS) $(LDFLAGS) $(SRCS) -o $@
 
-# --verilog-data-width=4 : gom 4 byte / dong (khop voi "reg [31:0] mem[0:255]"
-#   trong if_stage.v -- neu de mac dinh, objcopy xuat 1 BYTE/dong, $readmemh
-#   se nap sai hoan toan (moi word 32-bit chi con 8 bit thap co nghia).
-# --reverse-bytes=4      : ELF luu lenh theo little-endian (byte thap truoc),
-#   objcopy noi thang 4 byte file lien tiep thanh 1 token khong doi thu tu
-#   -> phai dao nguoc 4 byte/nhom de ra dung gia tri word (vd byte file
-#   "37 01 00 00" phai thanh "00000137", khong phai "37010000").
-$(TARGET).hex: $(TARGET).elf
-	$(OBJCOPY) -O verilog --verilog-data-width=4 --reverse-bytes=4 $< $@
-	@echo "-> $@ ($$(wc -l < $@) dong, nap duoc thang bang \$$readmemh)"
+# Sao khong dung thang "objcopy -O verilog"? Da thu va bi loi: co
+# --reverse-bytes cua objcopy KHONG dang tin cay giua cac phien ban
+# binutils -- ban cu (binutils 2.35) can --reverse-bytes=4 moi dao dung
+# thu tu byte, nhung ban moi (vd toolchain xPack rieng-none-elf-gcc,
+# binutils 2.43+) lai IM LANG BO QUA co nay, khien file .hex bi SAI thu
+# tu byte (dao nguoc moi word) MA KHONG BAO LOI GI CA -- chi phat hien
+# duoc khi mo phong thay chuong trinh khong chay dung.
+#
+# De khong con phu thuoc vao hanh vi (khong on dinh) cua objcopy nua,
+# xuat ra file .bin (dinh dang thuan byte, khong co khai niem "dao
+# byte" nao ca) roi tu dao byte bang Python (bin2hex.py) -- cho ra
+# cung 1 ket qua du dung binutils phien ban nao.
+$(TARGET).hex: $(TARGET).elf bin2hex.py
+	$(OBJCOPY) -O binary $< $(TARGET).bin
+	python bin2hex.py $(TARGET).bin $@
 
 # Xem thu chuong trinh da dich ra bao nhieu byte lenh (phai <= 1KB,
 # xem link.ld / if_stage.v: mem[0:255]).
@@ -55,4 +60,4 @@ disasm: $(TARGET).elf
 	$(OBJDUMP) -d $(TARGET).elf
 
 clean:
-	rm -f $(TARGET).elf $(TARGET).hex
+	rm -f $(TARGET).elf $(TARGET).bin $(TARGET).hex

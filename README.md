@@ -895,7 +895,9 @@ Repo chỉ chứa source, script và dataset cỡ nhỏ, tổng cộng khoảng 
 ├── --- Toolchain RISC-V GCC (thêm mới, nhánh feature/gcc-toolchain) ---
 │   ├── link.ld                 Linker script: tách vùng PROGRAM/DATA khớp if_stage.v/mem_stage.v
 │   ├── crt0.S                  Khởi động: gán sp, xóa .bss, nhảy vào c_entry()
-│   └── Makefile                 `make CROSS=<prefix-> clean all` -> demo_pipeline.hex
+│   ├── Makefile                 `make CROSS=<prefix-> clean all` -> demo_pipeline.hex
+│   └── bin2hex.py               objcopy -O binary -> .hex ($readmemh); tự đảo byte bằng Python,
+│                                 không phụ thuộc --reverse-bytes (không ổn định giữa các bản binutils)
 │
 ├── --- Script chạy tự động ---
 │   ├── run_modelsim.do        Chạy tb_cpu_top
@@ -982,7 +984,10 @@ make CROSS=riscv-none-elf- clean all
 `CROSS` là tiền tố tên bộ 3 công cụ GCC/binutils — nếu bạn dùng bộ toolchain khác (ví dụ cài qua MSYS2/pacman, hoặc bản SiFive `riscv64-unknown-elf-gcc`) thì đổi `CROSS` cho khớp tên lệnh `gcc` thật sự có trên máy bạn (gõ `<CROSS>gcc --version` để kiểm tra trước khi chạy `make`). Makefile sẽ tự chạy 2 bước:
 
 1. `riscv-none-elf-gcc ... crt0.S demo_pipeline.c -o demo_pipeline.elf` — biên dịch + liên kết theo bản đồ bộ nhớ trong `link.ld`.
-2. `riscv-none-elf-objcopy -O verilog --verilog-data-width=4 --reverse-bytes=4 demo_pipeline.elf demo_pipeline.hex` — xuất ra đúng định dạng 1 word 32-bit/dòng mà `$readmemh` cần (2 cờ `--verilog-data-width=4 --reverse-bytes=4` **bắt buộc phải có** — thiếu 1 trong 2 cờ này sẽ ra file `.hex` sai hoàn toàn, xem chú thích trong `Makefile`).
+2. `riscv-none-elf-objcopy -O binary demo_pipeline.elf demo_pipeline.bin` — xuất ra file nhị phân thuần (không có khái niệm "thứ tự byte" nào áp đặt thêm, chỉ là dãy byte y hệt trong bộ nhớ).
+3. `python bin2hex.py demo_pipeline.bin demo_pipeline.hex` — script Python tự gộp 4 byte thành 1 word 32-bit và tự đảo đúng thứ tự (little-endian) để ra định dạng `$readmemh` cần.
+
+> **Vì sao không dùng thẳng `objcopy -O verilog`?** Đã thử và gặp lỗi: cờ `--reverse-bytes` của `objcopy` xử lý **không nhất quán giữa các phiên bản binutils** — bản cũ (binutils 2.35, dùng khi phát triển nhánh này) cần `--reverse-bytes=4` mới ra đúng thứ tự byte, nhưng bản mới hơn (ví dụ đi kèm xPack RISC-V GCC, binutils 2.43+) lại **âm thầm bỏ qua** cờ này — ra file `.hex` sai thứ tự byte ở MỌI lệnh, không báo lỗi/cảnh báo gì cả, chỉ phát hiện được khi mô phỏng thấy chương trình không chạy đúng gì hết. Chuyển sang tự đảo byte bằng Python (`bin2hex.py`) để không còn phụ thuộc hành vi (không ổn định) của `objcopy` nữa — luôn ra đúng 1 kết quả bất kể máy bạn cài binutils phiên bản nào.
 
 Muốn xem chương trình build ra bao nhiêu byte lệnh (giới hạn 1KB) hoặc xem lại mã máy: `make size` / `make disasm`.
 
@@ -994,8 +999,8 @@ Muốn xem chương trình build ra bao nhiêu byte lệnh (giới hạn 1KB) ho
 >       -mno-relax -Wall -Wextra -ffunction-sections -fdata-sections \
 >       -T link.ld -nostdlib -Wl,--no-relax -Wl,--gc-sections \
 >       crt0.S demo_pipeline.c -o demo_pipeline.elf
->   riscv-none-elf-objcopy -O verilog --verilog-data-width=4 --reverse-bytes=4 \
->       demo_pipeline.elf demo_pipeline.hex
+>   riscv-none-elf-objcopy -O binary demo_pipeline.elf demo_pipeline.bin
+>   python bin2hex.py demo_pipeline.bin demo_pipeline.hex
 >   ```
 >   (đổi `riscv-none-elf-` thành đúng tiền tố toolchain trên máy bạn ở cả 2 dòng lệnh, nếu không dùng xPack). Đây chính xác là 2 lệnh `make` gọi ngầm — chỉ khác là bạn gõ tay thay vì để `make` gõ giúp.
 > - **Cài `make` để dùng `Makefile` cho tiện về sau** — chọn 1 trong các cách sau (không cần làm hết, máy hầu hết sinh viên chỉ có Git Bash trơn nên **không có sẵn** `choco`/`scoop`/`pacman` — nếu vậy dùng cách GnuWin32 bên dưới, không cần cài package manager trước):

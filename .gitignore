@@ -41,6 +41,19 @@ modelsim.ini
 *.mti
 
 # ============================================================
+# RISC-V GCC toolchain (nhanh feature/gcc-toolchain)
+# demo_pipeline.hex la ket qua CUOI CUNG (co commit), .elf/.bin la file
+# trung gian sinh ra khi "make" chay, khong can commit.
+# ============================================================
+*.elf
+*.bin
+
+# ============================================================
+# Waveform mo phong (vcd/wlf) sinh khi chay testbench, khong can commit
+# ============================================================
+*.vcd
+
+# ============================================================
 # Python
 # ============================================================
 __pycache__/
