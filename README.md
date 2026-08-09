@@ -1,7 +1,5 @@
 # RISC-V 32-bit 5-Stage Pipeline + Custom Compression Accelerator
 
-Đề tài Q2: Pattern-Aware Domain-Specific Compression Accelerator with Custom RISC-V Instruction.
-
 Dự án này xây dựng một lõi RISC-V RV32I pipeline 5 tầng, rồi gắn thêm vào đó một bộ tăng tốc nén dữ liệu điều khiển bằng ba lệnh custom. Điểm khác biệt so với các accelerator nén thông thường là người lập trình không phải chọn thuật toán nén: một khối phần cứng nhỏ tên `pattern_detect` sẽ đo đặc tính của từng block dữ liệu rồi tự quyết định dùng thuật toán nào.
 
 ---
@@ -40,8 +38,8 @@ Dự án này xây dựng một lõi RISC-V RV32I pipeline 5 tầng, rồi gắn
 │                         │ comp_delta     │
 │                         └────────────────┘
 │                                                                     │
-│  hazard_unit ◄──────── pc_src_ex, mem_read_ex, rd_addr_ex          │
-│  forwarding_unit ──────► fwd_a, fwd_b ──► fwd_rs1_ex, fwd_rs2_ex  │
+│  hazard_unit ◄──────── pc_src_ex, mem_read_ex, rd_addr_ex           │
+│  forwarding_unit ──────► fwd_a, fwd_b ──► fwd_rs1_ex, fwd_rs2_ex    │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
