@@ -898,9 +898,10 @@ Repo chỉ chứa source, script và dataset cỡ nhỏ, tổng cộng khoảng 
 │   └── Makefile                 `make CROSS=<prefix-> clean all` -> demo_pipeline.hex
 │
 ├── --- Script chạy tự động ---
-│   ├── run_modelsim.do        Chạy full regression trên ModelSim
+│   ├── run_modelsim.do        Chạy tb_cpu_top
 │   ├── run_modelsim_unit.do   Chạy riêng unit test
 │   ├── run_modelsim_lec.do    Chạy riêng baseline LEC
+│   ├── run_modelsim_all.do    Chạy tuần tự CẢ 18 testbench trong 1 lệnh
 │   ├── synth_phase5.tcl       Vivado: synth, impl và xuất report
 │   ├── synth_paper.tcl        Vivado: build cấu hình dùng trong paper
 │   ├── synth_uart_demo.tcl    Vivado: build bản demo UART
@@ -970,6 +971,20 @@ Trong đó `CROSS` là tiền tố tên bộ 3 công cụ GCC/binutils cài trê
 
 Muốn xem chương trình build ra bao nhiêu byte lệnh (giới hạn 1KB) hoặc xem lại mã máy: `make size` / `make disasm`.
 
+> **Lỗi `bash: make: command not found` (hay gặp trên Git Bash/MINGW64 của Windows):** bản Git for Windows mặc định không cài sẵn `make`. Có 2 hướng xử lý:
+>
+> - **Không cần cài gì thêm — gõ tay đúng 2 lệnh mà Makefile chạy bên trong:**
+>   ```bash
+>   riscv32-unknown-elf-gcc -march=rv32i -mabi=ilp32 -nostdlib -ffreestanding -Os \
+>       -mno-relax -Wall -Wextra -ffunction-sections -fdata-sections \
+>       -T link.ld -nostdlib -Wl,--no-relax -Wl,--gc-sections \
+>       crt0.S demo_pipeline.c -o demo_pipeline.elf
+>   riscv32-unknown-elf-objcopy -O verilog --verilog-data-width=4 --reverse-bytes=4 \
+>       demo_pipeline.elf demo_pipeline.hex
+>   ```
+>   (đổi `riscv32-unknown-elf-` thành đúng tiền tố toolchain trên máy bạn ở cả 2 dòng lệnh). Đây chính xác là 2 lệnh `make` gọi ngầm — chỉ khác là bạn gõ tay thay vì để `make` gõ giúp.
+> - **Cài `make` để dùng `Makefile` cho tiện về sau** — 1 trong các cách: `choco install make` (nếu có Chocolatey), `scoop install make` (nếu có Scoop), hoặc nếu bạn cài MSYS2 riêng (không phải chỉ Git Bash) thì `pacman -S make`.
+
 **Cách B — assembler Python (không cần cài GCC):**
 
 ```bash
@@ -1000,7 +1015,15 @@ Danh sách `.v` cần `vlog` (giữ đúng thứ tự) và cách đọc kết qu
 
 Với mọi testbench: nếu log dừng giữa chừng và in `[TIMEOUT]` thay vì PASS/FAIL, nghĩa là mạch bị treo (không tới điểm kiểm tra) — đây luôn là lỗi, kể cả khi không có dòng `FAIL` nào.
 
-Muốn chạy một lượt thay vì gõ từng lệnh: `run_modelsim.do` (toàn bộ `tb_cpu_top` — đã vá thêm 6 module accelerator còn thiếu trong danh sách `vlog`), `run_modelsim_unit.do` (4 testbench unit stage), `run_modelsim_lec.do` (`tb_lec_baseline`).
+Muốn chạy một lượt thay vì gõ từng lệnh:
+- `run_modelsim.do` — riêng `tb_cpu_top` (đã vá thêm 6 module accelerator còn thiếu trong danh sách `vlog`).
+- `run_modelsim_unit.do` — riêng 4 testbench unit stage (`tb_if_stage`/`tb_id_stage`/`tb_ex_stage`/`tb_mem_stage`).
+- `run_modelsim_lec.do` — riêng `tb_lec_baseline`.
+- **`run_modelsim_all.do` — chạy tuần tự CẢ 18 testbench trong 1 lệnh duy nhất:**
+  ```bash
+  vsim -c -do run_modelsim_all.do
+  ```
+  (hoặc `do run_modelsim_all.do` nếu gõ trong cửa sổ ModelSim GUI). Script tự biên dịch toàn bộ `.v` + `tb_*.v` một lần, rồi chạy từng testbench, in `===== <tên tb> =====` trước mỗi khối và `----- HET <tên tb> -----` sau khi xong — cuộn Transcript lên, đối chiếu từng khối với cột "Cách đọc kết quả" ở bảng trên để biết khối nào PASS/FAIL. Trước khi chạy, đảm bảo các file `.hex` cần thiết đã có sẵn (đã có sẵn trong repo; chỉ cần sinh lại — xem đầu file `run_modelsim_all.do` — nếu bạn vừa sửa code nguồn tương ứng).
 
 **Kiểm tra chéo bằng golden model / round-trip:**
 
