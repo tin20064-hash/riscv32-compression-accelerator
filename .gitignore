@@ -39,6 +39,7 @@ vsim.wlf
 modelsim.ini
 *.mpf
 *.mti
+tcl_stacktrace.txt
 
 # ============================================================
 # RISC-V GCC toolchain (nhanh feature/gcc-toolchain)
