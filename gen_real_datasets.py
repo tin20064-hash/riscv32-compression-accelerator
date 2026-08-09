@@ -5,7 +5,7 @@ from collections import defaultdict
 N        = 16
 MAX_BLK  = 512
 HERE     = os.path.dirname(os.path.abspath(__file__))
-DEFAULT  = r"C:\Users\tin20\AppData\Local\Temp\claude\C--Users-tin20-Desktop-Final-Project-32bit-RISCV-32bit-RISCV\ea210fdb-4a78-4b8c-a651-d538cc4abb2e\scratchpad\intel_lab_data.txt"
+DEFAULT  = os.path.join(HERE, "data.txt")  # tai Intel Lab Data ve, dat cung thu muc voi script nay (khop voi gen_real_datasets_full.py va .gitignore)
 
 def parse(path):
     per_mote = defaultdict(list)

@@ -198,7 +198,7 @@ always @(*) begin
             alu_src_r   = 1'b0;       
             alu_ctrl_r  = 4'b0000;    
             case (funct3)
-                PDETECT: reg_write_r = 1'b1;   
+                PDETECT: reg_write_r = 1'b0;   
                 CSTAT:   reg_write_r = 1'b1;  
                 CCOMPR:  reg_write_r = 1'b0;   
                 default: reg_write_r = 1'b0;

@@ -232,14 +232,14 @@ OPC_CUSTOM0: begin
     custom_en_r = 1'b1;
     custom_op_r = funct3;      // funct3 phân biệt 3 lệnh
     case (funct3)
-        PDETECT: reg_write_r = 1'b1;  // trả det_word về rd
+        PDETECT: reg_write_r = 1'b0;  // không ghi (rd=x0) — xem giải thích bên dưới
         CSTAT:   reg_write_r = 1'b1;  // trả status_word về rd
         CCOMPR:  reg_write_r = 1'b0;  // không ghi (rd=x0)
     endcase
 end
 ```
 
-CCOMPR không bật `reg_write` vì nó chỉ khởi động accelerator chứ không có gì trả về ngay. Kết quả nén được lấy sau bằng cách poll CSTAT.
+CCOMPR không bật `reg_write` vì nó chỉ khởi động accelerator chứ không có gì trả về ngay. PDETECT cũng không bật `reg_write` — lý do khác CCOMPR: pipeline chỉ có thể chốt kết quả vào `rd` ngay trong chu kỳ EX của chính lệnh đó, trong khi detection cần thêm 17 chu kỳ mới xong, nên giá trị chốt được lúc đó (nếu có) sẽ luôn là kết quả cũ/rác, không phải kết quả của lần detect vừa gọi. Kết quả nén và kết quả detect đều được lấy sau bằng cách poll CSTAT.
 
 ### 6.2 Mở rộng pipeline register
 
@@ -261,7 +261,7 @@ Hai tín hiệu này chỉ cần đi qua ID/EX, không cần lan tới EX/MEM, v
 assign ex_writeback_result = custom_en_ex ? custom_result_ex : alu_result_ex;
 ```
 
-`custom_result_ex` là tín hiệu tổ hợp nên có giá trị ngay trong cùng chu kỳ. Nhờ vậy CSTAT và PDETECT trả kết quả về thanh ghi đích mà không tốn thêm nhịp nào so với một lệnh ALU thường.
+`custom_result_ex` là tín hiệu tổ hợp nên có giá trị ngay trong cùng chu kỳ. Nhờ vậy CSTAT trả kết quả về thanh ghi đích mà không tốn thêm nhịp nào so với một lệnh ALU thường. PDETECT không hưởng lợi từ cơ chế này — pipeline chốt `rd` cùng chu kỳ lệnh phát ra, nhưng detection cần 17 chu kỳ sau mới có kết quả, nên `reg_write` của PDETECT bị tắt (xem mục 6.1); phần mềm phải đọc kết quả qua CSTAT sau khi poll `done`.
 
 ### 6.4 Scratchpad — bộ nhớ dùng chung giữa CPU và accelerator
 
