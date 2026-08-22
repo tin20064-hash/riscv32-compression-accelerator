@@ -8,13 +8,17 @@
 //     that exact mode -> dest pointer advances by out_len.
 //   - mode[] is kept to observe the detector picking modes by data characteristics.
 //
-// Compile (on a machine with RISC-V GCC):
-//   riscv32-unknown-elf-gcc -march=rv32i -mabi=ilp32 -nostdlib -O2 \
-//       -T link.ld demo_pipeline.c -o demo_pipeline.elf
-//   riscv32-unknown-elf-objcopy -O verilog demo_pipeline.elf demo_pipeline.hex
+// Compile (can RISC-V GCC + crt0.S + link.ld, xem Makefile):
+//   make demo_pipeline.hex
+// (tuong duong: gcc -march=rv32i -mabi=ilp32 -nostdlib -ffreestanding -O2
+//   -mno-relax -T link.ld crt0.S demo_pipeline.c -o demo_pipeline.elf
+//   roi objcopy -O verilog demo_pipeline.elf demo_pipeline.hex)
 //
-// Without a toolchain: use asm_riscv.py (minimal assembler) to build
-//   demo_pipeline.hex from an equivalent assembly program -> run in ModelSim.
+// Khong co toolchain: dung asm_riscv.py (assembler toi gian) de tu build
+//   demo_pipeline.hex tu 1 chuong trinh assembly tuong duong -> chay ModelSim.
+//
+// Diem vao that su la _start trong crt0.S (gan sp + xoa .bss truoc), roi
+// crt0.S moi goi vao c_entry() duoi day -- xem crt0.S de biet ly do.
 // ===================================================================
 #include "compress_api.h"
 
@@ -50,7 +54,10 @@ void run_pipeline(void) {
     }
 }
 
-void _start(void) {
+// Goi boi crt0.S sau khi sp da duoc gan va .bss da duoc xoa ve 0 --
+// KHONG dat ten la _start o day, vi _start (dia chi 0x0, diem CPU
+// fetch dau tien sau reset) phai la lenh assembly thuan trong crt0.S.
+void c_entry(void) {
     run_pipeline();
     for (;;) { }                        // halt
 }

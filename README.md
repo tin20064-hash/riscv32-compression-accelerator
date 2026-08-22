@@ -144,7 +144,7 @@ assign ex_writeback_result = custom_en_ex ? custom_result_ex : alu_result_ex;
 
 ### MEM — `mem_stage.v`
 
-Bộ nhớ dữ liệu `data_mem[0:255]` chứa 256 word. Dự án thêm vào đây một bước decode địa chỉ: nếu `address[12]` bằng 1 thì truy cập rơi vào scratchpad của accelerator, bằng 0 thì vào data memory như bình thường.
+Bộ nhớ dữ liệu `data_mem[0:255]` chứa 256 word. Dự án thêm vào đây một bước decode địa chỉ cho lệnh **ghi** (SW/SB/SH): nếu `address[12]` bằng 1 thì `sw` đi ra `spad_we/waddr/wdata` để ghi đúng vào scratchpad của accelerator, bằng 0 thì ghi vào `data_mem` như bình thường. Lưu ý: decode này **chỉ áp dụng cho ghi**, không áp dụng cho đọc — xem giới hạn ở mục 6.4 và "Ghi chú kỹ thuật".
 
 Store sub-word (SB, SH) dùng mask `byte_en` cộng với `aligned_wdata` — dữ liệu được nhân bản ra cả 4 byte lane rồi mask mới chọn lane nào thực sự ghi. Chiều ngược lại, load sub-word cần mở rộng dấu: LB mở rộng dấu từ 8 lên 32 bit, còn LBU thì độn 0.
 
@@ -276,7 +276,9 @@ module scratchpad #(AW=8, DW=32)(
 );
 ```
 
-CPU dùng port 0 để nạp dữ liệu nguồn vào, accelerator dùng port 1 để ghi kết quả ra. Cổng đọc là bất đồng bộ, tức accelerator đặt địa chỉ ra và có dữ liệu ngay trong cùng cycle — chi tiết này ảnh hưởng trực tiếp tới latency của cả ba module nén.
+CPU dùng port 0 để nạp dữ liệu nguồn vào, accelerator dùng port 1 để ghi kết quả ra. Cổng đọc (`raddr`/`rdata`) là bất đồng bộ, tức accelerator đặt địa chỉ ra và có dữ liệu ngay trong cùng cycle — chi tiết này ảnh hưởng trực tiếp tới latency của cả ba module nén.
+
+**Giới hạn hiện tại — chỉ accelerator đọc được scratchpad, CPU thì không:** cổng đọc `raddr`/`rdata` của `scratchpad.v` chỉ được nối cho `compress_accel` dùng nội bộ (xem `cpu_top.v`, module `u_accel`). CPU **không có đường đọc nào vào scratchpad thật** — nếu phần mềm thử `lw` từ vùng địa chỉ `address[12]=1`, `mem_stage.v` vẫn đọc từ `data_mem` cục bộ của chính nó (không phải scratchpad thật), và vì `data_mem` không bao giờ được ghi ở các địa chỉ đó (write chỉ vào `data_mem` khi `address[12]=0`) nên `lw` luôn trả về 0. Đây không phải bug mới phát sinh mà là giới hạn có từ đầu, chỉ vô hình vì trước giờ chưa ai cần CPU đọc lại dữ liệu accelerator đã ghi. Bài báo (`RV_PC_final.tex`, mục Conclusion) cũng tự liệt kê **"a scratchpad load path"** là hạng mục để dành cho tương lai. Muốn làm thật, cần thêm 1 cổng đọc thứ 2 vào `scratchpad.v` dành riêng cho CPU, không dùng chung với cổng đọc của accelerator.
 
 Việc phân biệt hai vùng nhớ nằm ở `mem_stage.v`:
 
@@ -876,7 +878,7 @@ Repo chỉ chứa source, script và dataset cỡ nhỏ, tổng cộng khoảng 
 │   └── gen_real_datasets_full.py  Sinh real_*_full.hex từ data.txt (không có trong repo)
 │
 ├── --- Assembler và evaluation ---
-│   ├── asm_riscv.py           Assembler Python thay cho RISC-V GCC
+│   ├── asm_riscv.py           Assembler Python cho demo_pipeline (cách 2, không cần GCC)
 │   ├── asm_sw_baseline.py     Sinh chương trình baseline software
 │   ├── asm_lec_baseline.py    Sinh chương trình baseline LEC
 │   ├── asm_uart_demo.py       Sinh chương trình demo UART
@@ -884,17 +886,24 @@ Repo chỉ chứa source, script và dataset cỡ nhỏ, tổng cộng khoảng 
 │   ├── eval_baselines.py      So sánh với gzip, zlib, LEC
 │   ├── eval_composability.py  Đánh giá khả năng ghép nhiều mode
 │   ├── eval_lec_winner.py     Phân tích các trường hợp LEC thắng
-│   ├── verify_paper_numbers.py  Kiểm tra chéo mọi con số trong paper
 │   └── read_uart_demo.py      Đọc stream UART từ board qua cổng COM
 │
 ├── --- Lớp phần mềm ---
 │   ├── compress_api.h         Wrapper C cho 3 lệnh custom
-│   └── demo_pipeline.c        Demo end-to-end (cần RISC-V GCC để biên dịch)
+│   └── demo_pipeline.c        Demo end-to-end -- entry point la c_entry(), goi tu crt0.S
+│
+├── --- Toolchain RISC-V GCC (thêm mới, nhánh feature/gcc-toolchain) ---
+│   ├── link.ld                 Linker script: tách vùng PROGRAM/DATA khớp if_stage.v/mem_stage.v
+│   ├── crt0.S                  Khởi động: gán sp, xóa .bss, nhảy vào c_entry()
+│   ├── Makefile                 `make CROSS=<prefix-> clean all` -> demo_pipeline.hex
+│   └── bin2hex.py               objcopy -O binary -> .hex ($readmemh); tự đảo byte bằng Python,
+│                                 không phụ thuộc --reverse-bytes (không ổn định giữa các bản binutils)
 │
 ├── --- Script chạy tự động ---
-│   ├── run_modelsim.do        Chạy full regression trên ModelSim
+│   ├── run_modelsim.do        Chạy tb_cpu_top
 │   ├── run_modelsim_unit.do   Chạy riêng unit test
 │   ├── run_modelsim_lec.do    Chạy riêng baseline LEC
+│   ├── run_modelsim_all.do    Chạy tuần tự CẢ 18 testbench trong 1 lệnh
 │   ├── synth_phase5.tcl       Vivado: synth, impl và xuất report
 │   ├── synth_paper.tcl        Vivado: build cấu hình dùng trong paper
 │   ├── synth_uart_demo.tcl    Vivado: build bản demo UART
@@ -942,79 +951,113 @@ Repo chỉ chứa source, script và dataset cỡ nhỏ, tổng cộng khoảng 
 
 Toolchain dùng trong dự án là ModelSim Intel FPGA Edition 2020.1.
 
+**Phân biệt 2 nơi gõ lệnh (hay nhầm):**
+- `make ...`, `python ...`, `riscv32-unknown-elf-gcc ...` — gõ trong **terminal thường** (Git Bash/cmd/PowerShell), *không* mở ModelSim. Đây là bước sinh file `.hex`/dataset, làm xong trước khi mở ModelSim.
+- `vlog ...`, `vsim ...`, `do ...` — 2 cách:
+  - Nếu đã **mở ModelSim GUI** sẵn: gõ *không* có chữ `vsim` ở đầu, ngay trong ô **Transcript** — ví dụ `do run_modelsim_all.do` (không phải `vsim -do run_modelsim_all.do`, vì `vsim` chính là chương trình đang chạy rồi).
+  - Nếu gõ thẳng từ **terminal thường** (chưa mở GUI): phải có tiền tố `vsim -c -do ...` — ModelSim sẽ tự chạy ở chế độ dòng lệnh (không hiện cửa sổ), in thẳng kết quả ra ngay terminal đó chứ không phải ra Transcript của GUI.
+
+> **Chạy `run_modelsim_all.do` (18 testbench liên tiếp) thì dùng cách 2 (terminal), không dùng cách 1 (GUI):** vì script chạy 18 testbench nối tiếp nhau, mỗi lần 1 cái gọi `$finish` thì nếu đang ở trong GUI, ModelSim sẽ bật hộp thoại xác nhận (phải bấm Yes/No thủ công) — làm 18 lần thì phải bấm tay 18 lần. Chạy thẳng `vsim -c -do run_modelsim_all.do` từ Git Bash (không mở GUI trước) sẽ không có cửa sổ nào để hiện hộp thoại, chạy hết 18 testbench tự động không dừng lại lần nào.
+
 ### Bước 0 — sinh dữ liệu
 
 ```bash
 python golden_compress.py      # sinh tb_expected_*_mixed.hex và in tỉ số nén
 python gen_demo.py             # sinh demo_src.hex, demo_expected_dest.hex
+```
+
+`demo_pipeline.hex` (chương trình cho testbench tích hợp) có thể sinh bằng 1 trong 2 cách:
+
+**Cách A — RISC-V GCC thật (nhánh `feature/gcc-toolchain`):**
+
+Chưa có sẵn bộ dịch RISC-V trên máy? Khuyên dùng **xPack RISC-V Embedded GCC** — bản dựng sẵn cho Windows, không cần cài Chocolatey/Scoop/MSYS2 trước:
+
+1. Tải `xpack-riscv-none-elf-gcc-<phiên bản mới nhất>-win32-x64.zip` tại https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases (mục **Assets** của bản release mới nhất).
+2. Giải nén vào `%USERPROFILE%\AppData\Roaming\xPacks\riscv-none-elf-gcc\` — sau khi giải nén sẽ có đường dẫn dạng `...\xPacks\riscv-none-elf-gcc\xpack-riscv-none-elf-gcc-<version>\bin`.
+3. Thêm thư mục `bin` đó vào biến môi trường `PATH` (giống bước cài `make`).
+4. Đóng mở lại Git Bash, gõ `riscv-none-elf-gcc --version` để kiểm tra.
+
+Bộ này đặt tên lệnh là `riscv-none-elf-gcc` (không phải `riscv32-unknown-elf-gcc`), nên chạy `make` với:
+
+```bash
+make CROSS=riscv-none-elf- clean all
+```
+
+`CROSS` là tiền tố tên bộ 3 công cụ GCC/binutils — nếu bạn dùng bộ toolchain khác (ví dụ cài qua MSYS2/pacman, hoặc bản SiFive `riscv64-unknown-elf-gcc`) thì đổi `CROSS` cho khớp tên lệnh `gcc` thật sự có trên máy bạn (gõ `<CROSS>gcc --version` để kiểm tra trước khi chạy `make`). Makefile sẽ tự chạy 2 bước:
+
+1. `riscv-none-elf-gcc ... crt0.S demo_pipeline.c -o demo_pipeline.elf` — biên dịch + liên kết theo bản đồ bộ nhớ trong `link.ld`.
+2. `riscv-none-elf-objcopy -O binary demo_pipeline.elf demo_pipeline.bin` — xuất ra file nhị phân thuần (không có khái niệm "thứ tự byte" nào áp đặt thêm, chỉ là dãy byte y hệt trong bộ nhớ).
+3. `python bin2hex.py demo_pipeline.bin demo_pipeline.hex` — script Python tự gộp 4 byte thành 1 word 32-bit và tự đảo đúng thứ tự (little-endian) để ra định dạng `$readmemh` cần.
+
+> **Vì sao không dùng thẳng `objcopy -O verilog`?** Đã thử và gặp lỗi: cờ `--reverse-bytes` của `objcopy` xử lý **không nhất quán giữa các phiên bản binutils** — bản cũ (binutils 2.35, dùng khi phát triển nhánh này) cần `--reverse-bytes=4` mới ra đúng thứ tự byte, nhưng bản mới hơn (ví dụ đi kèm xPack RISC-V GCC, binutils 2.43+) lại **âm thầm bỏ qua** cờ này — ra file `.hex` sai thứ tự byte ở MỌI lệnh, không báo lỗi/cảnh báo gì cả, chỉ phát hiện được khi mô phỏng thấy chương trình không chạy đúng gì hết. Chuyển sang tự đảo byte bằng Python (`bin2hex.py`) để không còn phụ thuộc hành vi (không ổn định) của `objcopy` nữa — luôn ra đúng 1 kết quả bất kể máy bạn cài binutils phiên bản nào.
+
+Muốn xem chương trình build ra bao nhiêu byte lệnh (giới hạn 1KB) hoặc xem lại mã máy: `make size` / `make disasm`.
+
+> **Lỗi `bash: make: command not found` (hay gặp trên Git Bash/MINGW64 của Windows):** bản Git for Windows mặc định không cài sẵn `make`. Có 2 hướng xử lý:
+>
+> - **Không cần cài gì thêm — gõ tay đúng 2 lệnh mà Makefile chạy bên trong:**
+>   ```bash
+>   riscv-none-elf-gcc -march=rv32i -mabi=ilp32 -nostdlib -ffreestanding -Os \
+>       -mno-relax -Wall -Wextra -ffunction-sections -fdata-sections \
+>       -T link.ld -nostdlib -Wl,--no-relax -Wl,--gc-sections \
+>       crt0.S demo_pipeline.c -o demo_pipeline.elf
+>   riscv-none-elf-objcopy -O binary demo_pipeline.elf demo_pipeline.bin
+>   python bin2hex.py demo_pipeline.bin demo_pipeline.hex
+>   ```
+>   (đổi `riscv-none-elf-` thành đúng tiền tố toolchain trên máy bạn ở cả 2 dòng lệnh, nếu không dùng xPack). Đây chính xác là 2 lệnh `make` gọi ngầm — chỉ khác là bạn gõ tay thay vì để `make` gõ giúp.
+> - **Cài `make` để dùng `Makefile` cho tiện về sau** — chọn 1 trong các cách sau (không cần làm hết, máy hầu hết sinh viên chỉ có Git Bash trơn nên **không có sẵn** `choco`/`scoop`/`pacman` — nếu vậy dùng cách GnuWin32 bên dưới, không cần cài package manager trước):
+>   - **GnuWin32 (không cần cài package manager trước, khuyên dùng nếu máy chỉ có Git Bash trơn):** tải `make` tại http://gnuwin32.sourceforge.net/packages/make.htm (mục "Binaries" -> file `.zip` hoặc `.exe` cài đặt), cài/giải nén xong sẽ có file `make.exe` (thường nằm trong `...\GnuWin32\bin`). Thêm đường dẫn thư mục `bin` đó vào biến môi trường `PATH` của Windows (Settings -> System -> About -> Advanced system settings -> Environment Variables -> sửa biến `Path`, thêm dòng mới trỏ tới thư mục chứa `make.exe`), rồi **mở lại** cửa sổ Git Bash (bắt buộc, để nó đọc `PATH` mới) và gõ `make --version` để kiểm tra đã nhận lệnh chưa.
+>   - `choco install make` — nếu máy đã cài sẵn Chocolatey.
+>   - `scoop install make` — nếu máy đã cài sẵn Scoop.
+>   - `pacman -S make` — nếu bạn cài MSYS2 đầy đủ riêng (không phải chỉ Git Bash đi kèm Git for Windows).
+
+**Cách B — assembler Python (không cần cài GCC):**
+
+```bash
 python asm_riscv.py            # sinh demo_pipeline.hex
 ```
 
-### Bước 1 — unit test từng module nén
+Cả 2 cách đều ra cùng 1 định dạng file, dùng thay thế cho nhau được — các bước chạy testbench bên dưới không đổi dù bạn chọn cách nào. Lưu ý duy nhất: nếu dùng cách A và có sửa/thêm biến toàn cục trong `demo_pipeline.c`, địa chỉ của `mode_log[]`/`len_log[]` trong bộ nhớ có thể đổi (do trình liên kết tự sắp xếp) — kiểm tra lại bằng `nm demo_pipeline.elf | grep -E "mode_log|len_log"` rồi cập nhật `MODE_BASE`/`LEN_BASE` trong `tb_demo_pipeline.v` và `tb_demo_sparse.v` cho khớp.
 
-```bash
-vlog comp_zero.v scratchpad.v tb_comp_zero.v
-vsim -c tb_comp_zero -do "run -all; quit -f"
+### Bảng toàn bộ testbench
 
-vlog comp_rle.v scratchpad.v tb_comp_rle.v
-vsim -c tb_comp_rle -do "run -all; quit -f"
+Danh sách `.v` cần `vlog` (giữ đúng thứ tự) và cách đọc kết quả PASS/FAIL cho từng testbench:
 
-vlog comp_delta.v scratchpad.v tb_comp_delta.v
-vsim -c tb_comp_delta -do "run -all; quit -f"
-```
+| Testbench | File `.v` cần vlog thêm | Lệnh `vsim` | Cách đọc kết quả |
+|---|---|---|---|
+| `tb_if_stage`, `tb_id_stage`, `tb_ex_stage`, `tb_mem_stage` | `if_stage.v id_stage.v ex_stage.v mem_stage.v if_id_reg.v id_ex_reg.v pipeline_regs.v wb_hazard_fwd.v` | `vsim -c tb_if_stage -do "run -all; quit -f"` (đổi tên cho 3 file còn lại) | Mỗi dòng in `PASS [tên_test]` hoặc `FAIL [tên_test]`. Không có dòng `FAIL` nào là qua hết. |
+| `tb_cpu_top` | như trên + `scratchpad.v comp_zero.v comp_rle.v comp_delta.v pattern_detect.v Compress_accel.v cpu_top.v` | `vsim -c tb_cpu_top -do "run -all; quit -f"` | Cuối log in `Total: N PASS, 0 FAIL` và `** ALL TESTS PASSED **`. Có số `FAIL` > 0 là có lỗi. |
+| `tb_comp_zero` / `tb_comp_rle` / `tb_comp_delta` | `comp_zero.v scratchpad.v` (đổi tên module cho rle/delta) | `vsim -c tb_comp_zero -do "run -all; quit -f"` | Dòng cuối `[PASS] ... matches golden model` hoặc `[FAIL] so loi = N`. |
+| `tb_pattern_detect` | `pattern_detect.v` | `vsim -c tb_pattern_detect -do "run -all; quit -f"` | `[PASS] pattern_detect matches golden ...` hoặc `[FAIL] so loi = N / 256 block`. |
+| `tb_compress_top` | `comp_zero.v comp_rle.v comp_delta.v pattern_detect.v Compress_accel.v scratchpad.v` | `vsim -c tb_compress_top -do "run -all; quit -f"` | `[PASS] RTL compress (via CCOMPR dispatcher) == golden for all 3 modes` hoặc `[FAIL] tong loi = N`. |
+| `tb_demo_pipeline` | `if_stage.v id_stage.v ex_stage.v mem_stage.v if_id_reg.v id_ex_reg.v pipeline_regs.v wb_hazard_fwd.v scratchpad.v comp_zero.v comp_rle.v comp_delta.v pattern_detect.v Compress_accel.v cpu_top.v` | `vsim -c tb_demo_pipeline -do "run -all; quit -f"` | `[MODE OK]` x3 + `[PASS] HW/SW detect->select->compress loop runs correctly on the core`. Bất kỳ dòng `FAIL` nào (MODE/LEN/DEST) là có lỗi. |
+| `tb_demo_sparse` | như `tb_demo_pipeline` | `vsim -c tb_demo_sparse -do "run -all; quit -f"` | `[PASS] Runs correctly with SPARSE clk_en -> NO hang.` — kiểm tra không bị treo khi `clk_en` thưa (giống điều kiện thật trên board). |
+| `tb_cyc_display` | như `tb_demo_pipeline` | `vsim -c tb_cyc_display -do "run -all; quit -f"` | Không có PASS/FAIL tự động — in `Block i: cyc_lat = N`, tự so bằng mắt với dòng `[DONE] expected: 17 (ZERO), 37 (RLE), 23 (DELTA)`. |
+| `tb_sw_baseline` | như `tb_demo_pipeline` | `vsim -c tb_sw_baseline -do "run -all; quit -f"` | `[PASS] SW output MATCHES golden (same format as HW) -> cycle counts are valid.` |
+| `tb_lec_baseline` | như `tb_demo_pipeline` (chạy `python asm_lec_baseline.py` trước để sinh `lec_baseline.hex`) | `vsim -c tb_lec_baseline -do "run -all; quit -f"` | `[PASS] SW output MATCHES the golden LEC bit-cost model -> cycle count is valid.` |
+| `tb_uart_tx` | `uart_tx.v` | `vsim -c tb_uart_tx -do "run -all; quit -f"` | `[PASS] uart_tx sent 4/4 bytes correctly` hoặc `[FAIL] N loi.` |
+| `tb_fpga_top_uart` | `uart_tx.v fpga_top_uart_fastsim.v` + toàn bộ file của `tb_demo_pipeline` (chạy `python asm_uart_demo.py` trước để sinh `uart_demo.hex`) | `vsim -c tb_fpga_top_uart -do "run -all; quit -f"` | `[PASS] UART sent correct mode+out_len for all 14 REAL data blocks` hoặc `[FAIL] N loi.` |
+| `tb_throughput` | như `tb_demo_pipeline` (không cần `cpu_top.v`) | `vsim -c tb_throughput -do "run -all; quit -f"` | Không có PASS/FAIL — in bảng cycle/throughput từng mode, đọc bằng mắt, kết thúc bằng `[DONE]`. |
 
-### Bước 2 — unit test detector
+Với mọi testbench: nếu log dừng giữa chừng và in `[TIMEOUT]` thay vì PASS/FAIL, nghĩa là mạch bị treo (không tới điểm kiểm tra) — đây luôn là lỗi, kể cả khi không có dòng `FAIL` nào.
 
-```bash
-vlog pattern_detect.v tb_pattern_detect.v
-vsim -c tb_pattern_detect -do "run -all; quit -f"
-```
+Muốn chạy một lượt thay vì gõ từng lệnh:
+- `run_modelsim.do` — riêng `tb_cpu_top` (đã vá thêm 6 module accelerator còn thiếu trong danh sách `vlog`).
+- `run_modelsim_unit.do` — riêng 4 testbench unit stage (`tb_if_stage`/`tb_id_stage`/`tb_ex_stage`/`tb_mem_stage`).
+- `run_modelsim_lec.do` — riêng `tb_lec_baseline`.
+- **`run_modelsim_all.do` — chạy tuần tự CẢ 18 testbench trong 1 lệnh duy nhất:**
+  ```bash
+  vsim -c -do run_modelsim_all.do
+  ```
+  (hoặc `do run_modelsim_all.do` nếu gõ trong cửa sổ ModelSim GUI). Script tự biên dịch toàn bộ `.v` + `tb_*.v` một lần, rồi chạy từng testbench, in `===== <tên tb> =====` trước mỗi khối và `----- HET <tên tb> -----` sau khi xong — cuộn Transcript lên, đối chiếu từng khối với cột "Cách đọc kết quả" ở bảng trên để biết khối nào PASS/FAIL. Trước khi chạy, đảm bảo các file `.hex` cần thiết đã có sẵn (đã có sẵn trong repo; chỉ cần sinh lại — xem đầu file `run_modelsim_all.do` — nếu bạn vừa sửa code nguồn tương ứng).
 
-### Bước 3 — integration test toàn CPU
-
-```bash
-vlog if_stage.v id_stage.v ex_stage.v mem_stage.v wb_hazard_fwd.v \
-     pipeline_regs.v cpu_top.v scratchpad.v \
-     comp_zero.v comp_rle.v comp_delta.v pattern_detect.v Compress_accel.v \
-     tb_demo_pipeline.v
-vsim -c tb_demo_pipeline -do "run -all; quit -f"
-```
-
-Kết quả mong đợi:
-
-```
-[MODE OK]   block 0 -> mode 0  (ZERO)
-[MODE OK]   block 1 -> mode 1  (RLE)
-[MODE OK]   block 2 -> mode 2  (DELTA)
-[PASS] Vong HW/SW detect->chon->nen chay dung tren core (3 block, 3 mode).
-```
-
-### Bước 4 — verification chặt
-
-So khớp golden qua dispatcher:
-
-```bash
-vlog comp_zero.v comp_rle.v comp_delta.v pattern_detect.v Compress_accel.v tb_compress_top.v
-vsim -c tb_compress_top -do "run -all; quit -f"
-```
-
-Kiểm tra round-trip không mất dữ liệu:
+**Kiểm tra chéo bằng golden model / round-trip:**
 
 ```bash
 python golden_compress.py --roundtrip
-```
-
-### Bước 5 — evaluation
-
-```bash
 python gen_datasets.py        # sinh 3 dataset tương phản
 python eval_paper.py          # bảng sweep tỉ số nén, ghi ra eval_paper_sweep.csv
-
-vlog comp_zero.v comp_rle.v comp_delta.v pattern_detect.v Compress_accel.v tb_throughput.v
-vsim -c tb_throughput -do "run -all; quit -f"
 ```
-
-Muốn chạy một lượt thay vì gõ từng lệnh, dùng `run_modelsim.do` cho toàn bộ regression hoặc `run_modelsim_unit.do` nếu chỉ cần unit test.
 
 ---
 
@@ -1081,3 +1124,5 @@ Tham số `AW` khác nhau giữa hai ngữ cảnh: trong `cpu_top` là 8, tươn
 Pipeline không stall theo `custom_busy`, phần mềm tự poll CSTAT. Cách này đã verify là đủ đúng, nhưng nếu cần một handshake thật thì chỗ phải sửa là `hazard_unit`.
 
 Máy phát triển không có RISC-V GCC nên `asm_riscv.py` đảm nhiệm việc dịch assembly. File `demo_pipeline.c` giữ lại làm bản tham chiếu cho ai có sẵn toolchain đầy đủ.
+
+CPU không đọc được từ scratchpad qua `lw` (chỉ `sw`/accelerator mới đi đúng đường) — xem chi tiết ở mục 6.4. `asm_uart_demo.py`/`tb_fpga_top_uart.v` vì vậy chỉ gửi/kiểm tra `(mode, out_len)` qua UART, đúng khớp phạm vi đã verify trong bài báo, không gửi payload nén thật. Từng có một bản thử nghiệm cho CPU `lw` lại payload từ scratchpad để gửi qua UART; bản đó bị bỏ vì rơi đúng vào giới hạn trên (payload đọc ra luôn là 0) — nếu sau này cần làm thật (đúng mục "future work" của bài báo), phải thêm cổng đọc thứ 2 vào `scratchpad.v` trước.
